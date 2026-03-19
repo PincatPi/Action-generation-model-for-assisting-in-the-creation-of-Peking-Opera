@@ -30,28 +30,15 @@ def get_all_bbox_params(kps, vis_thresh=2):
     num_to_interpolate = 0
     start_index = -1
     bbox_params = np.empty(shape=(0, 3), dtype=np.float32)
-
-    for i, kp in enumerate(kps):
-        bbox_param = kp_to_bbox_param(kp, vis_thresh=vis_thresh)
+    for idx, kp in enumerate(kps):
+        bbox_param = kp_to_bbox_param(kp, vis_thresh)
         if bbox_param is None:
             num_to_interpolate += 1
-            continue
-
-        if start_index == -1:
-            start_index = i
-            num_to_interpolate = 0
-
-        if num_to_interpolate > 0:
-            previous = bbox_params[-1]
-            interpolated = np.array(
-                [np.linspace(prev, curr, num_to_interpolate + 2)
-                 for prev, curr in zip(previous, bbox_param)])
-            bbox_params = np.vstack((bbox_params, interpolated.T[1:-1]))
-            num_to_interpolate = 0
-
-        bbox_params = np.vstack((bbox_params, bbox_param))
-
-    return bbox_params, start_index, i + 1
+        else:
+            if start_index == -1:
+                start_index = idx
+            bbox_params = np.vstack((bbox_params, bbox_param))
+    return bbox_params, start_index, idx
 
 
 def smooth_bbox_params(bbox_params, kernel_size=11, sigma=3):
