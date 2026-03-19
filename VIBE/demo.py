@@ -41,10 +41,8 @@ def main(args):
     if video_file.startswith('https://www.youtube.com'):
         print(f'Donwloading YouTube video "{video_file}"')
         video_file = download_youtube_clip(video_file, '/tmp')
-
         if video_file is None:
             exit('Youtube url is not valid!')
-
         print(f'YouTube Video has been downloaded to {video_file}...')
 
     if not os.path.isfile(video_file):
@@ -80,104 +78,60 @@ def main(args):
         if tracking_results[person_id]['frames'].shape[0] < MIN_NUM_FRAMES:
             del tracking_results[person_id]
 
+    if len(tracking_results) == 0:
+        print('No tracks found in the video')
+        return
+
     model = VIBE_Demo(
         seqlen=16,
         n_layers=2,
         hidden_size=1024,
-        add_linear=True,
-        use_residual=True,
+        pretrained=args.ckpt,
     ).to(device)
 
-    pretrained_file = download_ckpt(use_3dpw=False)
-    ckpt = torch.load(pretrained_file)
-    print(f'Performance of pretrained model on 3DPW: {ckpt["performance"]}')
-    ckpt = ckpt['gen_state_dict']
-    model.load_state_dict(ckpt, strict=False)
     model.eval()
-    print(f'Loaded pretrained weights from "{pretrained_file}"')
 
-    print(f'Running VIBE on each tracklet...')
-    vibe_time = time.time()
-    vibe_results = {}
-    for person_id in tqdm(list(tracking_results.keys())):
-        bboxes = joints2d = None
-
-        if args.tracking_method == 'bbox':
-            bboxes = tracking_results[person_id]['bbox']
-        elif args.tracking_method == 'pose':
-            joints2d = tracking_results[person_id]['joints2d']
-
+    for person_id in tqdm(tracking_results.keys()):
+        print(f'Processing person id {person_id}')
+        bboxes = tracking_results[person_id]['bbox']
         frames = tracking_results[person_id]['frames']
 
         dataset = Inference(
             image_folder=image_folder,
             frames=frames,
             bboxes=bboxes,
-            joints2d=joints2d,
             scale=bbox_scale,
         )
 
-        bboxes = dataset.bboxes
-        frames = dataset.frames
-        has_keypoints = True if joints2d is not None else False
-
-        dataloader = DataLoader(dataset, batch_size=args.vibe_batch_size, num_workers=16)
+        batch_size = args.batch_size
+        data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=8)
 
         with torch.no_grad():
             pred_cam, orig_cam, verts, pose, betas, joints3d = [], [], [], [], [], []
-
-            for batch in dataloader:
+            for batch in data_loader:
                 batch = batch.unsqueeze(0)
                 batch = batch.to(device)
+                batch = batch.reshape(-1, 16, 224, 224)
+                output = model(batch)[-1]
+                pred_cam.append(output['pred_cam'])
+                verts.append(output['verts'])
+                pose.append(output['pose'])
+                betas.append(output['betas'])
 
-                predictions = model(batch)
-
-                for pred in predictions:
-                    pred_cam.append(pred['pred_cam'])
-                    verts.append(pred['verts'])
-                    pose.append(pred['pose'])
-                    betas.append(pred['betas'])
-                    joints3d.append(pred['kp_3d'])
-
-            pred_cam = torch.cat(pred_cam, dim=0)
-            verts = torch.cat(verts, dim=0)
-            pose = torch.cat(pose, dim=0)
-            betas = torch.cat(betas, dim=0)
-            joints3d = torch.cat(joints3d, dim=0)
-
-        if args.smooth:
-            verts, pose, joints3d = smooth_pose(pose.cpu().numpy(), betas.cpu().numpy())
-
-        vibe_results[person_id] = {
-            'pred_cam': pred_cam.cpu().numpy(),
-            'orig_cam': orig_cam,
-            'verts': verts,
-            'pose': pose,
-            'betas': betas.cpu().numpy(),
-            'joints3d': joints3d,
-            'bboxes': bboxes,
-            'frame_ids': frames,
-        }
-
-    print(f'VIBE completed in {time.time() - vibe_time:.2f} seconds')
-
-    shutil.rmtree(image_folder)
-
-    return vibe_results
+    print(f'Total time: {time.time() - total_time}')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--vid_file', type=str)
-    parser.add_argument('--output_folder', type=str, default='output')
-    parser.add_argument('--tracking_method', type=str, default='bbox', choices=['bbox', 'pose'])
-    parser.add_argument('--detector', type=str, default='yolo', choices=['maskrcnn', 'yolo'])
-    parser.add_argument('--yolo_img_size', type=int, default=416)
-    parser.add_argument('--tracker_batch_size', type=int, default=12)
-    parser.add_argument('--vibe_batch_size', type=int, default=450)
-    parser.add_argument('--display', action='store_true')
-    parser.add_argument('--smooth', action='store_true')
-    parser.add_argument('--staf_dir', type=str, default='/path/to/staf')
+    parser.add_argument('--vid_file', type=str, help='input video path or youtube url')
+    parser.add_argument('--output_folder', type=str, default='output', help='output folder')
+    parser.add_argument('--ckpt', type=str, default='data/vibe_data/vibe_model_w_3dpw.pth.tar', help='checkpoint path')
+    parser.add_argument('--batch_size', type=int, default=8, help='batch size')
+    parser.add_argument('--display', action='store_true', help='display results')
+    parser.add_argument('--tracking_method', type=str, default='mpt', choices=['mpt', 'pose'], help='tracking method')
+    parser.add_argument('--detector', type=str, default='yolo', choices=['yolo', 'maskrcnn'], help='detector type')
+    parser.add_argument('--yolo_img_size', type=int, default=416, help='yolo image size')
+    parser.add_argument('--tracker_batch_size', type=int, default=12, help='tracker batch size')
     args = parser.parse_args()
 
     main(args)
