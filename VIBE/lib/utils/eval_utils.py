@@ -32,10 +32,7 @@ def compute_error_verts(pred_verts, target_verts=None, target_theta=None):
         from lib.models.smpl import SMPL_MODEL_DIR
         from lib.models.smpl import SMPL
         device = 'cpu'
-        smpl = SMPL(
-            SMPL_MODEL_DIR,
-            batch_size=1,
-        ).to(device)
+        smpl = SMPL(SMPL_MODEL_DIR, batch_size=1).to(device)
 
         betas = torch.from_numpy(target_theta[:,75:]).to(device)
         pose = torch.from_numpy(target_theta[:,3:75]).to(device)
@@ -50,110 +47,50 @@ def compute_error_verts(pred_verts, target_verts=None, target_theta=None):
 
         target_verts = np.concatenate(target_verts, axis=0)
 
-    assert len(pred_verts) == len(target_verts)
-    error_per_vert = np.sqrt(np.sum((target_verts - pred_verts) ** 2, axis=2))
-    return np.mean(error_per_vert, axis=1)
-
-
-def compute_similarity_transform(S1, S2):
-    transposed = False
-    if S1.shape[0] != 3 and S1.shape[0] != 2:
-        S1 = S1.T
-        S2 = S2.T
-        transposed = True
-    assert(S2.shape[1] == S1.shape[1])
-
-    mu1 = S1.mean(axis=1, keepdims=True)
-    mu2 = S2.mean(axis=1, keepdims=True)
-    X1 = S1 - mu1
-    X2 = S2 - mu2
-
-    var1 = np.sum(X1**2)
-
-    K = X1.dot(X2.T)
-
-    U, s, Vh = np.linalg.svd(K)
-    V = Vh.T
-    Z = np.eye(U.shape[0])
-    Z[-1, -1] *= np.sign(np.linalg.det(U.dot(V.T)))
-    R = V.dot(Z.dot(U.T))
-
-    scale = np.trace(R.dot(K)) / var1
-
-    t = mu2 - scale*(R.dot(mu1))
-
-    S1_hat = scale*R.dot(S1) + t
-
-    if transposed:
-        S1_hat = S1_hat.T
-
-    return S1_hat
-
-
-def compute_similarity_transform_torch(S1, S2):
-    transposed = False
-    if S1.shape[0] != 3 and S1.shape[0] != 2:
-        S1 = S1.T
-        S2 = S2.T
-        transposed = True
-    assert (S2.shape[1] == S1.shape[1])
-
-    mu1 = S1.mean(axis=1, keepdims=True)
-    mu2 = S2.mean(axis=1, keepdims=True)
-    X1 = S1 - mu1
-    X2 = S2 - mu2
-
-    var1 = torch.sum(X1 ** 2)
-
-    K = X1.mm(X2.T)
-
-    U, s, V = torch.svd(K)
-    Z = torch.eye(U.shape[0], device=S1.device)
-    Z[-1, -1] *= torch.sign(torch.det(U @ V.T))
-    R = V.mm(Z.mm(U.T))
-
-    scale = torch.trace(R.mm(K)) / var1
-    t = mu2 - scale * (R.mm(mu1))
-
-    S1_hat = scale * R.mm(S1) + t
-
-    if transposed:
-        S1_hat = S1_hat.T
-
-    return S1_hat
+    error = np.mean(np.linalg.norm(pred_verts - target_verts, axis=-1))
+    return error
 
 
 def batch_compute_similarity_transform_torch(S1, S2):
-    transposed = False
-    if S1.shape[-1] != 3 and S1.shape[-1] != 2:
-        S1 = S1.permute(0, 2, 1)
-        S2 = S2.permute(0, 2, 1)
-        transposed = True
+    batch_size = S1.shape[0]
+    S1 = S1.permute(0, 2, 1)
+    S2 = S2.permute(0, 2, 1)
 
-    mu1 = S1.mean(axis=2, keepdims=True)
-    mu2 = S2.mean(axis=2, keepdims=True)
+    mu1 = S1.mean(dim=2, keepdim=True)
+    mu2 = S2.mean(dim=2, keepdim=True)
 
     X1 = S1 - mu1
     X2 = S2 - mu2
 
-    var1 = torch.sum(X1 ** 2, dim=1).sum(dim=1)
+    var1 = torch.sum(X1**2, dim=2).sum(dim=1)
+    std1 = torch.sqrt(var1 + 1e-6)
 
-    K = torch.bmm(X1, X2.permute(0, 2, 1))
+    X1 = X1 / std1.unsqueeze(-1).unsqueeze(-1)
+    X2 = X2 / std1.unsqueeze(-1).unsqueeze(-1)
 
-    U, s, V = torch.svd(K)
-    Z = torch.eye(U.shape[1], device=S1.device).unsqueeze(0)
-    Z = Z.repeat(U.shape[0], 1, 1)
-    Z[:, -1, -1] *= torch.sign(torch.det(torch.bmm(U, V.permute(0, 2, 1))))
-    R = torch.bmm(V, torch.bmm(Z, U.permute(0, 2, 1)))
+    R = torch.matmul(X1, X2.permute(0, 2, 1))
+    R = R.cpu().numpy()
 
-    var1 = var1.unsqueeze(-1)
-    scale = torch.einsum('bii->b', R.bmm(K)) / var1
+    S1 = S1.cpu().numpy()
+    S2 = S2.cpu().numpy()
 
-    t = mu2 - scale.unsqueeze(-1).unsqueeze(-1) * torch.bmm(R, mu1)
+    out = []
+    for i in range(batch_size):
+        U, s, Vt = np.linalg.svd(R[i])
+        r = np.dot(U, Vt)
+        s = np.linalg.det(r)
+        s = np.diag([1, 1, s])
+        r = np.dot(U, np.dot(s, Vt))
+        out.append(r)
 
-    S1_hat = scale.unsqueeze(-1).unsqueeze(-1) * torch.bmm(R, S1) + t
+    R = np.stack(out, axis=0)
+    R = torch.from_numpy(R).float().cuda()
 
-    if transposed:
-        S1_hat = S1_hat.permute(0, 2, 1)
+    S1 = torch.from_numpy(S1).float().cuda()
+    S2 = torch.from_numpy(S2).float().cuda()
 
-    return S1_hat
+    S1 = torch.matmul(R, S1)
+
+    S1 = S1.permute(0, 2, 1)
+
+    return S1
