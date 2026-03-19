@@ -45,53 +45,46 @@ class TemporalSMPLify():
                          create_transl=False).to(self.device)
 
     def __call__(self, init_pose, init_betas, init_cam_t, camera_center, keypoints_2d):
-        camera_translation = init_cam_t.clone()
+        batch_size = init_pose.shape[0]
+        body_pose = init_pose[:, 3:].clone()
+        global_orient = init_pose[:, :3].clone()
+        betas = init_betas.clone()
 
-        joints_2d = keypoints_2d[:, :, :2]
-        joints_conf = keypoints_2d[:, :, -1]
+        pred_cam_t = init_cam_t.clone()
+        keypoints_2d = keypoints_2d.clone()
+        camera_center = camera_center.clone()
 
-        body_pose = init_pose[:, 3:].detach().clone()
-        global_orient = init_pose[:, :3].detach().clone()
-        betas = init_betas.detach().clone()
+        for i in range(self.num_iters):
+            body_pose.requires_grad = True
+            global_orient.requires_grad = True
+            betas.requires_grad = True
+            pred_cam_t.requires_grad = True
 
-        body_pose.requires_grad = False
-        betas.requires_grad = False
-        global_orient.requires_grad = True
-        camera_translation.requires_grad = True
+            smpl_output = self.smpl(betas=betas,
+                                     body_pose=body_pose,
+                                     global_orient=global_orient,
+                                     transl=pred_cam_t)
 
-        camera_opt_params = [global_orient, camera_translation]
+            model_joints = smpl_output.joints
 
-        if self.use_lbfgs:
-            camera_optimizer = torch.optim.LBFGS(camera_opt_params, max_iter=self.max_iter,
-                                                 lr=self.step_size, line_search_fn='strong_wolfe')
-            for i in range(self.num_iters):
-                def closure():
-                    camera_optimizer.zero_grad()
-                    smpl_output = self.smpl(global_orient=global_orient,
-                                           body_pose=body_pose,
-                                           betas=betas)
-                    model_joints = smpl_output.joints
-                    loss = temporal_camera_fitting_loss(
-                        model_joints, camera_translation,
-                        init_cam_t, joints_2d, joints_conf,
-                        camera_center, self.focal_length,
-                        self.ign_joints
-                    )
-                    loss.backward()
-                    return loss
-                camera_optimizer.step(closure)
+            loss, loss_dict = temporal_body_fitting_loss(
+                body_pose, global_orient, betas, pred_cam_t,
+                model_joints, keypoints_2d,
+                self.pose_prior,
+                focal_length=self.focal_length,
+            )
 
-        return {'cam_t': camera_translation, 'global_orient': global_orient}
+            loss.backward()
 
-    def get_fitting_loss(self, pose, betas, cam_t, camera_center, keypoints_2d):
-        smpl_output = self.smpl(global_orient=pose[:, :3],
-                               body_pose=pose[:, 3:],
-                               betas=betas)
-        model_joints = smpl_output.joints
-        loss = temporal_camera_fitting_loss(
-            model_joints, cam_t,
-            cam_t, keypoints_2d[:, :, :2], keypoints_2d[:, :, -1],
-            camera_center, self.focal_length,
-            self.ign_joints
-        )
-        return loss
+            with torch.no_grad():
+                body_pose -= self.step_size * body_pose.grad
+                global_orient -= self.step_size * global_orient.grad
+                betas -= self.step_size * betas.grad
+                pred_cam_t -= self.step_size * pred_cam_t.grad
+
+            body_pose.grad = None
+            global_orient.grad = None
+            betas.grad = None
+            pred_cam_t.grad = None
+
+        return body_pose, global_orient, betas, pred_cam_t
