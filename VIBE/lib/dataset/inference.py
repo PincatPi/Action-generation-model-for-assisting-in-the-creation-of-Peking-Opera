@@ -42,34 +42,28 @@ class Inference(Dataset):
     def __getitem__(self, idx):
         img = cv2.cvtColor(cv2.imread(self.image_file_names[idx]), cv2.COLOR_BGR2RGB)
 
-        bbox = self.bboxes[idx]
-
-        j2d = self.joints2d[idx] if self.has_keypoints else None
-
-        norm_img, raw_img, kp_2d = get_single_image_crop_demo(
-            img,
-            bbox,
-            kp_2d=j2d,
-            scale=self.scale,
-            crop_size=self.crop_size)
         if self.has_keypoints:
-            return norm_img, kp_2d
+            bbox = self.bboxes[idx]
+            joints2d = self.joints2d[idx]
+
+            norm_img, norm_joints2d = get_single_image_crop_demo(
+                img,
+                bbox,
+                kp_2d=joints2d,
+                scale=self.scale,
+                crop_size=self.crop_size)
+
+            norm_img = to_tensor(norm_img)
+            return {
+                'img': norm_img,
+                'joints2d': norm_joints2d,
+            }
         else:
-            return norm_img
-
-
-class ImageFolder(Dataset):
-    def __init__(self, image_folder):
-        self.image_file_names = [
-            osp.join(image_folder, x)
-            for x in os.listdir(image_folder)
-            if x.endswith('.png') or x.endswith('.jpg')
-        ]
-        self.image_file_names = sorted(self.image_file_names)
-
-    def __len__(self):
-        return len(self.image_file_names)
-
-    def __getitem__(self, idx):
-        img = cv2.cvtColor(cv2.imread(self.image_file_names[idx]), cv2.COLOR_BGR2RGB)
-        return to_tensor(img)
+            bbox = self.bboxes[idx]
+            norm_img = get_single_image_crop_demo(
+                img,
+                bbox,
+                scale=self.scale,
+                crop_size=self.crop_size)
+            norm_img = to_tensor(norm_img)
+            return {'img': norm_img}
