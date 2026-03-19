@@ -7,8 +7,17 @@ from lib.models.smpl import get_smpl_faces
 
 
 class WeakPerspectiveCamera(pyrender.Camera):
-    def __init__(self, scale, translation, znear=pyrender.camera.DEFAULT_Z_NEAR, zfar=None, name=None):
-        super(WeakPerspectiveCamera, self).__init__(znear=znear, zfar=zfar, name=name)
+    def __init__(self,
+                 scale,
+                 translation,
+                 znear=pyrender.camera.DEFAULT_Z_NEAR,
+                 zfar=None,
+                 name=None):
+        super(WeakPerspectiveCamera, self).__init__(
+            znear=znear,
+            zfar=zfar,
+            name=name,
+        )
         self.scale = scale
         self.translation = translation
 
@@ -25,6 +34,7 @@ class WeakPerspectiveCamera(pyrender.Camera):
 class Renderer:
     def __init__(self, resolution=(224,224), orig_img=False, wireframe=False):
         self.resolution = resolution
+
         self.faces = get_smpl_faces()
         self.orig_img = orig_img
         self.wireframe = wireframe
@@ -36,8 +46,7 @@ class Renderer:
 
         self.scene = pyrender.Scene(bg_color=[0.0, 0.0, 0.0, 0.0], ambient_light=(0.3, 0.3, 0.3))
 
-        light = pyrender.PointLight(color=[1.0, 1.0, 1.0], intensity=1)
-
+        light = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=1)
         light_pose = np.eye(4)
         light_pose[:3, 3] = [0, -1, 1]
         self.scene.add(light, pose=light_pose)
@@ -48,49 +57,38 @@ class Renderer:
         light_pose[:3, 3] = [1, 1, 2]
         self.scene.add(light, pose=light_pose)
 
-    def render(self, img, verts, cam, angle=None, axis=None, mesh_filename=None, color=[1.0, 1.0, 0.9]):
-        mesh = trimesh.Trimesh(vertices=verts, faces=self.faces, process=False)
+        self.camera_nodes = []
+        self.mesh_nodes = []
 
-        Rx = trimesh.transformations.rotation_matrix(math.radians(180), [1, 0, 0])
-        mesh.apply_transform(Rx)
+    def render(self, img, verts, cam):
+        if len(self.camera_nodes) > 0:
+            for node in self.camera_nodes:
+                self.scene.remove_node(node)
+            self.camera_nodes = []
 
-        if mesh_filename is not None:
-            mesh.export(mesh_filename)
+        if len(self.mesh_nodes) > 0:
+            for node in self.mesh_nodes:
+                self.scene.remove_node(node)
+            self.mesh_nodes = []
 
-        if angle and axis:
-            R = trimesh.transformations.rotation_matrix(math.radians(angle), axis)
-            mesh.apply_transform(R)
+        for idx in range(len(verts)):
+            mesh = trimesh.Trimesh(verts[idx], self.faces)
+            mesh = pyrender.Mesh.from_trimesh(mesh)
+            node = self.scene.add(mesh)
+            self.mesh_nodes.append(node)
 
-        sx, sy, tx, ty = cam
+            camera = WeakPerspectiveCamera(
+                scale=cam[idx, 0] * np.ones(2),
+                translation=cam[idx, 1:]
+            )
+            camera_node = self.scene.add(camera)
+            self.camera_nodes.append(camera_node)
 
-        camera = WeakPerspectiveCamera(scale=[sx, sy], translation=[tx, ty], zfar=1000.)
+        color, _ = self.renderer.render(self.scene, flags=RenderFlags.RGBA)
+        color = color.astype(np.float32) / 255.0
 
-        material = pyrender.MetallicRoughnessMaterial(
-            metallicFactor=0.0,
-            alphaMode='OPAQUE',
-            baseColorFactor=(color[0], color[1], color[2], 1.0))
-
-        mesh = pyrender.Mesh.from_trimesh(mesh, material=material)
-
-        mesh_node = self.scene.add(mesh, 'mesh')
-
-        camera_node = self.scene.add(camera, 'camera')
-
-        if self.orig_img:
-            flags = RenderFlags.RGBA
-        else:
-            flags = RenderFlags.RGBA
-
-        color, depth = self.renderer.render(self.scene, flags=flags)
-        self.scene.remove_node(mesh_node)
-        self.scene.remove_node(camera_node)
-
-        if self.orig_img:
-            valid_mask = (depth > 0)[:, :, np.newaxis]
-            output_img = (color[:, :, :3] * valid_mask +
-                          (1 - valid_mask) * img)
-            output_img = output_img.astype(np.uint8)
-        else:
-            output_img = color[:, :, :3]
+        valid_mask = (color[:, :, -1] > 0)[:, :, np.newaxis]
+        output_img = (color[:, :, :3] * valid_mask +
+                      (1 - valid_mask) * img)
 
         return output_img
