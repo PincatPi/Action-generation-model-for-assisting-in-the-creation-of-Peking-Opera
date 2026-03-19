@@ -51,7 +51,14 @@ class TemporalConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, dilation=1):
         super(TemporalConv, self).__init__()
         pad = (kernel_size + (kernel_size-1) * (dilation-1) - 1) // 2
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=(kernel_size, 1), padding=(pad, 0), stride=(stride, 1), dilation=(dilation, 1))
+        self.conv = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=(kernel_size, 1),
+            padding=(pad, 0),
+            stride=(stride, 1),
+            dilation=(dilation, 1))
+
         self.bn = nn.BatchNorm2d(out_channels)
 
     def forward(self, x):
@@ -61,7 +68,15 @@ class TemporalConv(nn.Module):
 
 
 class MultiScale_TemporalConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, dilations=[1,2,3,4], residual=True, residual_kernel_size=1):
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 kernel_size=3,
+                 stride=1,
+                 dilations=[1,2,3,4],
+                 residual=True,
+                 residual_kernel_size=1):
+
         super().__init__()
         assert out_channels % (len(dilations) + 2) == 0, '# out channels should be multiples of # branches'
 
@@ -71,13 +86,21 @@ class MultiScale_TemporalConv(nn.Module):
             assert len(kernel_size) == len(dilations)
         else:
             kernel_size = [kernel_size]*len(dilations)
-
         self.branches = nn.ModuleList([
             nn.Sequential(
-                nn.Conv2d(in_channels, branch_channels, kernel_size=1, padding=0),
+                nn.Conv2d(
+                    in_channels,
+                    branch_channels,
+                    kernel_size=1,
+                    padding=0),
                 nn.BatchNorm2d(branch_channels),
                 nn.ReLU(inplace=True),
-                TemporalConv(branch_channels, branch_channels, kernel_size=ks, stride=stride, dilation=dilation),
+                TemporalConv(
+                    branch_channels,
+                    branch_channels,
+                    kernel_size=ks,
+                    stride=stride,
+                    dilation=dilation),
             )
             for ks, dilation in zip(kernel_size, dilations)
         ])
@@ -145,12 +168,13 @@ class CTRGC(nn.Module):
         x1 = torch.einsum('ncuv,nctv->nctu', x1, x3)
         return x1
 
-
 class unit_tcn(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=9, stride=1):
         super(unit_tcn, self).__init__()
         pad = int((kernel_size - 1) / 2)
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=(kernel_size, 1), padding=(pad, 0), stride=(stride, 1))
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=(kernel_size, 1), padding=(pad, 0),
+                              stride=(stride, 1))
+
         self.bn = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         conv_init(self.conv)
@@ -176,7 +200,10 @@ class unit_gcn(nn.Module):
 
         if residual:
             if in_channels != out_channels:
-                self.down = nn.Sequential(nn.Conv2d(in_channels, out_channels, 1), nn.BatchNorm2d(out_channels))
+                self.down = nn.Sequential(
+                    nn.Conv2d(in_channels, out_channels, 1),
+                    nn.BatchNorm2d(out_channels)
+                )
             else:
                 self.down = lambda x: x
         else:
@@ -216,12 +243,15 @@ class TCN_GCN_unit(nn.Module):
     def __init__(self, in_channels, out_channels, A, stride=1, residual=True, adaptive=True, kernel_size=5, dilations=[1,2]):
         super(TCN_GCN_unit, self).__init__()
         self.gcn1 = unit_gcn(in_channels, out_channels, A, adaptive=adaptive)
-        self.tcn1 = MultiScale_TemporalConv(out_channels, out_channels, kernel_size=kernel_size, stride=stride, dilations=dilations, residual=False)
+        self.tcn1 = MultiScale_TemporalConv(out_channels, out_channels, kernel_size=kernel_size, stride=stride, dilations=dilations,
+                                            residual=False)
         self.relu = nn.ReLU(inplace=True)
         if not residual:
             self.residual = lambda x: 0
+
         elif (in_channels == out_channels) and (stride == 1):
             self.residual = lambda x: x
+
         else:
             self.residual = unit_tcn(in_channels, out_channels, kernel_size=1, stride=stride)
 
@@ -231,7 +261,8 @@ class TCN_GCN_unit(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, num_class=60, num_point=25, num_person=2, graph=None, graph_args=dict(), in_channels=3, drop_out=0, adaptive=True):
+    def __init__(self, num_class=60, num_point=25, num_person=2, graph=None, graph_args=dict(), in_channels=3,
+                 drop_out=0, adaptive=True):
         super(Model, self).__init__()
 
         if graph is None:
