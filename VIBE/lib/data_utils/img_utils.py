@@ -58,70 +58,67 @@ def gen_trans_from_patch_cv(c_x, c_y, src_width, src_height, dst_width, dst_heig
     dst[1, :] = dst_center + dst_downdir
     dst[2, :] = dst_center + dst_rightdir
 
+    trans = cv2.getAffineTransform(src, dst)
+
     if inv:
-        trans = cv2.getAffineTransform(np.float32(dst), np.float32(src))
-    else:
-        trans = cv2.getAffineTransform(np.float32(src), np.float32(dst))
+        trans = cv2.invertAffineTransform(trans)
 
     return trans
 
-def generate_patch_image_cv(cvimg, c_x, c_y, bb_width, bb_height, patch_width, patch_height, do_flip, scale, rot):
-    img = cvimg.copy()
-    img_height, img_width, img_channels = img.shape
-
-    if do_flip:
-        img = img[:, ::-1, :]
-        c_x = img_width - c_x - 1
-
-    trans = gen_trans_from_patch_cv(c_x, c_y, bb_width, bb_height, patch_width, patch_height, scale, rot, inv=False)
-
-    img_patch = cv2.warpAffine(img, trans, (int(patch_width), int(patch_height)),
-                               flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-
-    return img_patch, trans
-
 def get_single_image_crop(image, bbox, scale=1.2, crop_size=224):
-    if isinstance(image, str):
-        image = cv2.cvtColor(cv2.imread(image), cv2.COLOR_BGR2RGB)
-    else:
-        image = image.copy()
+    bbox = np.array(bbox).reshape(4)
+    center = bbox[:2]
+    bbox_size = bbox[2:]
+    aspect_ratio = crop_size[1] / crop_size[0]
 
-    bbox_x, bbox_y, bbox_w, bbox_h = bbox
-    center = [bbox_x + bbox_w/2, bbox_y + bbox_h/2]
-    width = bbox_w * scale
-    height = bbox_h * scale
+    trans = gen_trans_from_patch_cv(
+        center[0], center[1], bbox_size[0], bbox_size[1],
+        crop_size[0], crop_size[1], scale, 0, inv=False)
 
-    trans = gen_trans_from_patch_cv(center[0], center[1], width, height, crop_size, crop_size, 1.0, 0.0, inv=False)
-    img_patch = cv2.warpAffine(image, trans, (crop_size, crop_size), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+    cropped_image = cv2.warpAffine(image, trans, (crop_size[0], crop_size[1]), flags=cv2.INTER_LINEAR)
 
-    img_patch = img_patch[:, :, ::-1].copy()
-    img_patch = transforms.ToTensor()(img_patch)
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    img_patch = normalize(img_patch)
+    return cropped_image
 
-    return img_patch
+def get_single_image_crop_demo(image, bbox, kp_2d=None, scale=1.2, crop_size=224):
+    bbox = np.array(bbox).reshape(4)
+    center = bbox[:2]
+    bbox_size = bbox[2:]
 
-def get_single_image_crop_demo(image, bbox, kp_2d, scale=1.2, crop_size=224):
-    if isinstance(image, str):
-        image = cv2.cvtColor(cv2.imread(image), cv2.COLOR_BGR2RGB)
-    else:
-        image = image.copy()
+    trans = gen_trans_from_patch_cv(
+        center[0], center[1], bbox_size[0], bbox_size[1],
+        crop_size, crop_size, scale, 0, inv=False)
 
-    bbox_x, bbox_y, bbox_w, bbox_h = bbox
-    center = [bbox_x + bbox_w/2, bbox_y + bbox_h/2]
-    width = bbox_w * scale
-    height = bbox_h * scale
-
-    trans = gen_trans_from_patch_cv(center[0], center[1], width, height, crop_size, crop_size, 1.0, 0.0, inv=False)
-    img_patch = cv2.warpAffine(image, trans, (crop_size, crop_size), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+    cropped_image = cv2.warpAffine(image, trans, (crop_size, crop_size), flags=cv2.INTER_LINEAR)
 
     if kp_2d is not None:
-        for i in range(len(kp_2d)):
-            kp_2d[i, 0:2] = trans_point2d(kp_2d[i, 0:2], trans)
+        kp_2d[:, :2] = trans_point2d(kp_2d[:, :2].T, trans).T
+        return cropped_image, kp_2d
 
-    img_patch = img_patch[:, :, ::-1].copy()
-    img_patch = transforms.ToTensor()(img_patch)
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    img_patch = normalize(img_patch)
+    return cropped_image
 
-    return img_patch, image, kp_2d
+def split_into_chunks(vid_names, seqlen, stride):
+    vid_names = np.array(vid_names)
+    N = len(vid_names)
+    vid_ids = np.zeros(N)
+    curr_id = 0
+    for i in range(N):
+        if i > 0 and vid_names[i] != vid_names[i-1]:
+            curr_id += 1
+        vid_ids[i] = curr_id
+
+    curr_id = 0
+    indices = []
+    for i in range(N):
+        if vid_ids[i] == curr_id:
+            indices.append(i)
+        else:
+            curr_id += 1
+            indices.append(i)
+
+    chunks = []
+    for i in range(0, N, stride):
+        if i + seqlen <= N:
+            if vid_ids[i] == vid_ids[i + seqlen - 1]:
+                chunks.append([i, i + seqlen - 1])
+
+    return chunks
