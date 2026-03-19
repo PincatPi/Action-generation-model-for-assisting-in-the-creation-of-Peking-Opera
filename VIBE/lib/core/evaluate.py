@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import time
 import torch
 import shutil
@@ -21,12 +19,7 @@ from lib.utils.eval_utils import (
 logger = logging.getLogger(__name__)
 
 class Evaluator():
-    def __init__(
-            self,
-            test_loader,
-            model,
-            device=None,
-    ):
+    def __init__(self, test_loader, model, device=None):
         self.test_loader = test_loader
         self.model = model
         self.device = device
@@ -38,11 +31,8 @@ class Evaluator():
 
     def validate(self):
         self.model.eval()
-
         start = time.time()
-
         summary_string = ''
-
         bar = Bar('Validation', fill='#', max=len(self.test_loader))
 
         if self.evaluation_accumulators is not None:
@@ -52,12 +42,10 @@ class Evaluator():
         J_regressor = torch.from_numpy(np.load(osp.join(VIBE_DATA_DIR, 'J_regressor_h36m.npy'))).float()
 
         for i, target in enumerate(self.test_loader):
-
             move_dict_to_device(target, self.device)
 
             with torch.no_grad():
                 inp = target['features']
-
                 preds = self.model(inp, J_regressor=J_regressor)
 
                 n_kp = preds[-1]['kp_3d'].shape[-2]
@@ -66,27 +54,21 @@ class Evaluator():
                 pred_verts = preds[-1]['verts'].view(-1, 6890, 3).cpu().numpy()
                 target_theta = target['theta'].view(-1, 85).cpu().numpy()
 
-
                 self.evaluation_accumulators['pred_verts'].append(pred_verts)
                 self.evaluation_accumulators['target_theta'].append(target_theta)
-
                 self.evaluation_accumulators['pred_j3d'].append(pred_j3d)
                 self.evaluation_accumulators['target_j3d'].append(target_j3d)
 
             batch_time = time.time() - start
-
             summary_string = f'({i + 1}/{len(self.test_loader)}) | batch: {batch_time * 10.0:.4}ms | ' \
                              f'Total: {bar.elapsed_td} | ETA: {bar.eta_td:}'
-
             bar.suffix = summary_string
             bar.next()
 
         bar.finish()
-
         logger.info(summary_string)
 
     def evaluate(self):
-
         for k, v in self.evaluation_accumulators.items():
             self.evaluation_accumulators[k] = np.vstack(v)
 
@@ -99,7 +81,6 @@ class Evaluator():
         print(f'Evaluating on {pred_j3ds.shape[0]} number of poses...')
         pred_pelvis = (pred_j3ds[:,[2],:] + pred_j3ds[:,[3],:]) / 2.0
         target_pelvis = (target_j3ds[:,[2],:] + target_j3ds[:,[3],:]) / 2.0
-
 
         pred_j3ds -= pred_pelvis
         target_j3ds -= target_pelvis
@@ -128,7 +109,4 @@ class Evaluator():
 
         log_str = ' '.join([f'{k.upper()}: {v:.4f},'for k,v in eval_dict.items()])
         print(log_str)
-
-    def run(self):
-        self.validate()
-        self.evaluate()
+        return eval_dict
