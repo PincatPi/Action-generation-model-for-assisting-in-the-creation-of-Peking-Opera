@@ -78,10 +78,11 @@ class MultiScale_TemporalConv(nn.Module):
                  residual_kernel_size=1):
 
         super().__init__()
-        assert out_channels % (len(dilations) + 2) == 0, '# out channels should be multiples of # branches'
+        assert out_channels % (len(dilations) + 2) == 0, '# out channels should be divisible by # branches'
 
         self.num_branches = len(dilations) + 2
         branch_channels = out_channels // self.num_branches
+
         if type(kernel_size) == list:
             assert len(kernel_size) == len(dilations)
         else:
@@ -96,46 +97,53 @@ class MultiScale_TemporalConv(nn.Module):
                     padding=0),
                 nn.BatchNorm2d(branch_channels),
                 nn.ReLU(inplace=True),
-                TemporalConv(
+                nn.Conv2d(
                     branch_channels,
                     branch_channels,
-                    kernel_size=kernel_size[i],
-                    stride=stride,
-                    dilation=dilations[i]),
-                nn.ReLU(inplace=True)
+                    kernel_size=(kernel_size[i], 1),
+                    padding=((kernel_size[i] - 1) * dilations[i] // 2, 0),
+                    dilation=(dilations[i], 1)),
+                nn.BatchNorm2d(branch_channels)
             )
             for i, dilation in enumerate(dilations)
         ])
 
-        self.branches.append(nn.Sequential(
-            nn.Conv2d(in_channels, branch_channels, kernel_size=1, padding=0),
-            nn.BatchNorm2d(branch_channels),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=(3,1), stride=(stride,1), padding=(1,0)),
-            nn.BatchNorm2d(branch_channels)
-        ))
+        self.maxpool_branch = nn.Sequential(
+            nn.MaxPool2d(kernel_size=(3, 1), stride=(stride, 1), padding=(1, 0)),
+            nn.BatchNorm2d(in_channels) if in_channels == branch_channels else nn.Sequential(
+                nn.Conv2d(in_channels, branch_channels, kernel_size=1),
+                nn.BatchNorm2d(branch_channels)
+            ),
+            nn.ReLU(inplace=True)
+        )
 
         self.branches.append(nn.Sequential(
             nn.Conv2d(in_channels, branch_channels, kernel_size=1, padding=0),
-            nn.BatchNorm2d(branch_channels),
-            nn.ReLU(inplace=True) if residual else nn.Identity(),
+            nn.BatchNorm2d(branch_channels)
         ))
 
         if not residual:
             self.residual = lambda x: 0
-        elif in_channels == out_channels:
-            self.residual = nn.Identity()
+        elif (in_channels == out_channels) and (stride == 1):
+            self.residual = lambda x: x
         else:
             self.residual = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0),
+                nn.Conv2d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=1, stride=(stride, 1)),
                 nn.BatchNorm2d(out_channels)
             )
 
-        self.apply(weights_init)
+        self.act = nn.ReLU(inplace=True)
 
     def forward(self, x):
         res = self.residual(x)
-        branch_outputs = [branch(x) for branch in self.branches]
+        branch_outputs = []
+        for branch in self.branches:
+            branch_outputs.append(branch(x))
+        branch_outputs.append(self.maxpool_branch(x))
         out = torch.cat(branch_outputs, dim=1)
         out += res
+        out = self.act(out)
         return out
