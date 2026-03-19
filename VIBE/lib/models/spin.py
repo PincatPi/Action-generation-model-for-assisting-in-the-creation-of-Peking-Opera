@@ -70,9 +70,6 @@ class HMR(nn.Module):
         self.decpose = nn.Linear(1024, npose)
         self.decshape = nn.Linear(1024, 10)
         self.deccam = nn.Linear(1024, 3)
-        nn.init.xavier_uniform_(self.decpose.weight, gain=0.01)
-        nn.init.xavier_uniform_(self.decshape.weight, gain=0.01)
-        nn.init.xavier_uniform_(self.deccam.weight, gain=0.01)
 
         self.smpl = SMPL(SMPL_MODEL_DIR, batch_size=64, create_transl=False).to('cpu')
 
@@ -83,14 +80,6 @@ class HMR(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
-
-        mean_params = np.load(smpl_mean_params)
-        init_pose = torch.from_numpy(mean_params['pose'][:]).unsqueeze(0)
-        init_shape = torch.from_numpy(mean_params['shape'][:]).unsqueeze(0)
-        init_cam = torch.from_numpy(mean_params['cam']).unsqueeze(0)
-        self.register_buffer('init_pose', init_pose)
-        self.register_buffer('init_shape', init_shape)
-        self.register_buffer('init_cam', init_cam)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -112,13 +101,6 @@ class HMR(nn.Module):
     def forward(self, x, init_pose=None, init_shape=None, init_cam=None, n_iter=3):
         batch_size = x.shape[0]
 
-        if init_pose is None:
-            init_pose = self.init_pose.expand(batch_size, -1)
-        if init_shape is None:
-            init_shape = self.init_shape.expand(batch_size, -1)
-        if init_cam is None:
-            init_cam = self.init_cam.expand(batch_size, -1)
-
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -135,6 +117,7 @@ class HMR(nn.Module):
         pred_pose = init_pose
         pred_shape = init_shape
         pred_cam = init_cam
+
         for i in range(n_iter):
             xc = torch.cat([x, pred_pose, pred_shape, pred_cam], 1)
             xc = self.fc1(xc)
@@ -148,25 +131,20 @@ class HMR(nn.Module):
 
         pred_rotmat = rot6d_to_rotmat(pred_pose).view(batch_size, 24, 3, 3)
 
+        output = self.smpl(betas=pred_shape, body_pose=pred_rotmat[:, 1:], global_orient=pred_rotmat[:, 0].unsqueeze(1), pose2rot=False)
+
         return pred_rotmat, pred_shape, pred_cam
 
 
-def hmr(smpl_mean_params=SMPL_MEAN_PARAMS, **kwargs):
-    model = HMR(Bottleneck, [3, 4, 6, 3], smpl_mean_params, **kwargs)
+class Regressor(nn.Module):
+    def __init__(self):
+        super(Regressor, self).__init__()
+        self.hmr = HMR(Bottleneck, [3, 4, 6, 3], SMPL_MEAN_PARAMS)
+
+    def forward(self, x, J_regressor=None):
+        return self.hmr(x, J_regressor=J_regressor)
+
+
+def hmr(pretrained=False, **kwargs):
+    model = HMR(Bottleneck, [3, 4, 6, 3], SMPL_MEAN_PARAMS)
     return model
-
-
-def perspective_projection(points, rotation, translation, focal_length, camera_center):
-    batch_size = points.shape[0]
-    K = torch.zeros([batch_size, 3, 3], device=points.device)
-    K[:, 0, 0] = focal_length
-    K[:, 1, 1] = focal_length
-    K[:, 2, 2] = 1.
-    K[:, :-1, -1] = camera_center
-
-    points = torch.einsum('bij,bkj->bik', points, rotation)
-    points = points + translation.unsqueeze(1)
-    points = torch.einsum('bij,bkj->bik', points, K)
-    points = points / points[:, :, -1].unsqueeze(-1)
-    points = points[:, :, :-1]
-    return points
