@@ -17,8 +17,7 @@ class Bottleneck(nn.Module):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
-                               padding=1, bias=False)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * 4)
@@ -28,24 +27,18 @@ class Bottleneck(nn.Module):
 
     def forward(self, x):
         residual = x
-
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu(out)
-
         out = self.conv3(out)
         out = self.bn3(out)
-
         if self.downsample is not None:
             residual = self.downsample(x)
-
         out += residual
         out = self.relu(out)
-
         return out
 
 
@@ -54,8 +47,7 @@ class HMR(nn.Module):
         self.inplanes = 64
         super(HMR, self).__init__()
         npose = 24 * 6
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
-                               bias=False)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -75,11 +67,7 @@ class HMR(nn.Module):
         nn.init.xavier_uniform_(self.decshape.weight, gain=0.01)
         nn.init.xavier_uniform_(self.deccam.weight, gain=0.01)
 
-        self.smpl = SMPL(
-            SMPL_MODEL_DIR,
-            batch_size=64,
-            create_transl=False
-        ).to('cpu')
+        self.smpl = SMPL(SMPL_MODEL_DIR, batch_size=64, create_transl=False).to('cpu')
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -89,47 +77,35 @@ class HMR(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-        mean_params = np.load(smpl_mean_params)
-        init_pose = torch.from_numpy(mean_params['pose'][:]).unsqueeze(0)
-        init_shape = torch.from_numpy(mean_params['shape'][:].astype('float32')).unsqueeze(0)
-        init_cam = torch.from_numpy(mean_params['cam']).unsqueeze(0)
-        self.register_buffer('init_pose', init_pose)
-        self.register_buffer('init_shape', init_shape)
-        self.register_buffer('init_cam', init_cam)
-
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes * block.expansion,
-                          kernel_size=1, stride=stride, bias=False),
+                nn.Conv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False),
                 nn.BatchNorm2d(planes * block.expansion),
             )
-
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
             layers.append(block(self.inplanes, planes))
-
         return nn.Sequential(*layers)
 
-    def feature_extractor(self, x):
+    def forward(self, x, J_regressor=None):
+        batch_size = x.shape[0]
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
-
-        x1 = self.layer1(x)
-        x2 = self.layer2(x1)
-        x3 = self.layer3(x2)
-        x4 = self.layer4(x3)
-
-        xf = self.avgpool(x4)
-        xf = xf.view(xf.size(0), -1)
-        return xf
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        return x
 
 
-def hmr(pretrained=True, **kwargs):
-    model = HMR(Bottleneck, [3, 4, 6, 3], SMPL_MEAN_PARAMS, **kwargs)
+def hmr(smpl_mean_params=SMPL_MEAN_PARAMS):
+    model = HMR(Bottleneck, [3, 4, 6, 3], smpl_mean_params)
     return model

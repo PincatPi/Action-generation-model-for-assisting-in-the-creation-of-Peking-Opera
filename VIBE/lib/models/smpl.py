@@ -1,4 +1,3 @@
-# This script is borrowed and extended from https://github.com/nkolot/SPIN/blob/master/models/hmr.py
 import torch
 import numpy as np
 import os.path as osp
