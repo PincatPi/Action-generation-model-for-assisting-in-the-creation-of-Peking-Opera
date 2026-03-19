@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import argparse
 from yacs.config import CfgNode as CN
 
@@ -56,10 +54,6 @@ cfg.TRAIN.MOT_DISCR.UPDATE_STEPS = 1
 cfg.TRAIN.MOT_DISCR.FEATURE_POOL = 'concat'
 cfg.TRAIN.MOT_DISCR.HIDDEN_SIZE = 1024
 cfg.TRAIN.MOT_DISCR.NUM_LAYERS = 1
-cfg.TRAIN.MOT_DISCR.ATT = CN()
-cfg.TRAIN.MOT_DISCR.ATT.SIZE = 1024
-cfg.TRAIN.MOT_DISCR.ATT.LAYERS = 1
-cfg.TRAIN.MOT_DISCR.ATT.DROPOUT = 0.1
 
 cfg.DATASET = CN()
 cfg.DATASET.SEQLEN = 20
@@ -69,42 +63,14 @@ cfg.LOSS = CN()
 cfg.LOSS.KP_2D_W = 60.
 cfg.LOSS.KP_3D_W = 30.
 cfg.LOSS.SHAPE_W = 0.001
-cfg.LOSS.POSE_W = 1.0
+ncfg.LOSS.POSE_W = 1.0
 cfg.LOSS.D_MOTION_LOSS_W = 1.
 
 cfg.MODEL = CN()
-
 cfg.MODEL.TEMPORAL_TYPE = 'gru'
 
 cfg.MODEL.TGRU = CN()
 cfg.MODEL.TGRU.NUM_LAYERS = 1
-cfg.MODEL.TGRU.ADD_LINEAR = False
-cfg.MODEL.TGRU.RESIDUAL = False
-cfg.MODEL.TGRU.HIDDEN_SIZE = 2048
-cfg.MODEL.TGRU.BIDIRECTIONAL = False
 
-
-def get_cfg_defaults():
+def get_config():
     return cfg.clone()
-
-
-def update_cfg(cfg_file):
-    cfg = get_cfg_defaults()
-    cfg.merge_from_file(cfg_file)
-    return cfg.clone()
-
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, help='cfg file path')
-
-    args = parser.parse_args()
-    print(args, end='\n\n')
-
-    cfg_file = args.cfg
-    if args.cfg is not None:
-        cfg = update_cfg(args.cfg)
-    else:
-        cfg = get_cfg_defaults()
-
-    return cfg, cfg_file
