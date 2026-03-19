@@ -42,7 +42,9 @@ def iterdict(d):
 def accuracy(output, target):
     _, pred = output.topk(1)
     pred = pred.view(-1)
+
     correct = pred.eq(target).sum()
+
     return correct.item(), target.size(0) - correct.item()
 
 
@@ -80,11 +82,7 @@ def save_to_file(obj, filename, mode='w'):
 
 
 def concatenate_dicts(dict_list, dim=0):
-    out_dict = dict_list[0].copy()
-    for i in range(1, len(dict_list)):
-        for k, v in dict_list[i].items():
-            out_dict[k] = torch.cat([out_dict[k], v], dim=dim)
-    return out_dict
+    return {k: torch.cat([d[k] for d in dict_list], dim=dim) for k in dict_list[0].keys()}
 
 
 class AverageMeter(object):
@@ -100,6 +98,45 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
-    def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
+    def __repr__(self):
+        return f'{self.avg:.4f}'
+
+
+def setup_logger(logger_name, log_file, level=logging.INFO):
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(level)
+
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(level)
+    ch = logging.StreamHandler()
+    ch.setLevel(level)
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
+    return logger
+
+
+def create_logger(log_dir, phase='train'):
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    log_file = os.path.join(log_dir, f'{phase}.log')
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(logging.INFO)
+
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+
+    root_logger.addHandler(fh)
+    root_logger.addHandler(ch)
+
+    return root_logger
