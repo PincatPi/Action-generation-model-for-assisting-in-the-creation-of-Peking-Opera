@@ -50,66 +50,85 @@ def rotation_matrix_to_angle_axis(rotation_matrix):
 
 def quaternion_to_angle_axis(quaternion: torch.Tensor) -> torch.Tensor:
     if not torch.is_tensor(quaternion):
-        raise TypeError("Input type is not a torch.Tensor. Got {}".format(type(quaternion)))
+        raise TypeError("Input type is not a torch.Tensor")
 
     if not quaternion.shape[-1] == 4:
-        raise ValueError("Input must be a tensor of shape Nx4 or 4. Got {}".format(quaternion.shape))
-    q = torch.nn.functional.normalize(quaternion, p=2, dim=-1)
-    half_angle = torch.atan2(torch.norm(q[..., 1:], p=2, dim=-1), q[..., 0])
-    angle = 2.0 * half_angle
-    sin_half_angle_over_angle = torch.where(angle > 1e-6, torch.sin(half_angle) / half_angle, 1.0)
-    return q[..., 1:] / sin_half_angle_over_angle.unsqueeze(-1) * angle.unsqueeze(-1)
+        raise ValueError("Input must be a tensor of shape (*, 4)")
+
+    quaternion = quaternion.view(-1, 4)
+    n = quaternion.shape[0]
+
+    w, x, y, z = quaternion[:, 0], quaternion[:, 1], quaternion[:, 2], quaternion[:, 3]
+
+    sin_squared = x * x + y * y + z * z
+    sin_theta = torch.sqrt(sin_squared)
+    cos_theta = w
+
+    two_theta = 2.0 * torch.where(
+        cos_theta < 0.0,
+        torch.atan2(-sin_theta, -cos_theta),
+        torch.atan2(sin_theta, cos_theta)
+    )
+
+    k_pos = two_theta / sin_theta
+    k_neg = 2.0 * torch.ones_like(sin_theta)
+    k = torch.where(sin_squared > 0.0, k_pos, k_neg)
+
+    angle_axis = torch.zeros(n, 3, device=quaternion.device)
+    angle_axis[:, 0] = x * k
+    angle_axis[:, 1] = y * k
+    angle_axis[:, 2] = z * k
+    return angle_axis
 
 
 def rotation_matrix_to_quaternion(rotation_matrix: torch.Tensor) -> torch.Tensor:
-    if rotation_matrix.shape[-1] == 3:
-        rotation_matrix = torch.cat([rotation_matrix, torch.zeros((*rotation_matrix.shape[:-2], 3, 1), device=rotation_matrix.device)], dim=-1)
-        rotation_matrix[..., 3, 3] = 1.0
-    
-    batch_size = rotation_matrix.shape[0]
-    
-    matrix_diag = rotation_matrix.diagonal(dim1=-2, dim2=-1)
-    trace = torch.sum(matrix_diag, dim=-1)
-    
-    quaternion = torch.zeros((batch_size, 4), dtype=rotation_matrix.dtype, device=rotation_matrix.device)
-    
-    trace_pos = trace > 0
-    trace_not_pos = ~trace_pos
-    
-    if trace_pos.any():
-        s = torch.sqrt(trace[trace_pos] + 1.0) * 2
-        quaternion[trace_pos, 0] = 0.25 * s
-        quaternion[trace_pos, 1] = (rotation_matrix[trace_pos, 2, 1] - rotation_matrix[trace_pos, 1, 2]) / s
-        quaternion[trace_pos, 2] = (rotation_matrix[trace_pos, 0, 2] - rotation_matrix[trace_pos, 2, 0]) / s
-        quaternion[trace_pos, 3] = (rotation_matrix[trace_pos, 1, 0] - rotation_matrix[trace_pos, 0, 1]) / s
-    
-    if trace_not_pos.any():
-        diag = matrix_diag[trace_not_pos]
-        max_diag = torch.argmax(diag, dim=-1)
-        
-        i_mask = max_diag == 0
-        j_mask = max_diag == 1
-        k_mask = max_diag == 2
-        
-        if i_mask.any():
-            s = torch.sqrt(1.0 + diag[i_mask, 0] - diag[i_mask, 1] - diag[i_mask, 2]) * 2
-            quaternion[trace_not_pos][i_mask, 0] = (rotation_matrix[trace_not_pos][i_mask, 2, 1] - rotation_matrix[trace_not_pos][i_mask, 1, 2]) / s
-            quaternion[trace_not_pos][i_mask, 1] = 0.25 * s
-            quaternion[trace_not_pos][i_mask, 2] = (rotation_matrix[trace_not_pos][i_mask, 0, 1] + rotation_matrix[trace_not_pos][i_mask, 1, 0]) / s
-            quaternion[trace_not_pos][i_mask, 3] = (rotation_matrix[trace_not_pos][i_mask, 0, 2] + rotation_matrix[trace_not_pos][i_mask, 2, 0]) / s
-        
-        if j_mask.any():
-            s = torch.sqrt(1.0 + diag[j_mask, 1] - diag[j_mask, 0] - diag[j_mask, 2]) * 2
-            quaternion[trace_not_pos][j_mask, 0] = (rotation_matrix[trace_not_pos][j_mask, 0, 2] - rotation_matrix[trace_not_pos][j_mask, 2, 0]) / s
-            quaternion[trace_not_pos][j_mask, 1] = (rotation_matrix[trace_not_pos][j_mask, 0, 1] + rotation_matrix[trace_not_pos][j_mask, 1, 0]) / s
-            quaternion[trace_not_pos][j_mask, 2] = 0.25 * s
-            quaternion[trace_not_pos][j_mask, 3] = (rotation_matrix[trace_not_pos][j_mask, 1, 2] + rotation_matrix[trace_not_pos][j_mask, 2, 1]) / s
-        
-        if k_mask.any():
-            s = torch.sqrt(1.0 + diag[k_mask, 2] - diag[k_mask, 0] - diag[k_mask, 1]) * 2
-            quaternion[trace_not_pos][k_mask, 0] = (rotation_matrix[trace_not_pos][k_mask, 1, 0] - rotation_matrix[trace_not_pos][k_mask, 0, 1]) / s
-            quaternion[trace_not_pos][k_mask, 1] = (rotation_matrix[trace_not_pos][k_mask, 0, 2] + rotation_matrix[trace_not_pos][k_mask, 2, 0]) / s
-            quaternion[trace_not_pos][k_mask, 2] = (rotation_matrix[trace_not_pos][k_mask, 1, 2] + rotation_matrix[trace_not_pos][k_mask, 2, 1]) / s
-            quaternion[trace_not_pos][k_mask, 3] = 0.25 * s
-    
-    return quaternion
+    if rotation_matrix.shape[-1] != 4:
+        rotation_matrix = rotation_matrix.reshape(-1, 3, 4)
+    else:
+        rotation_matrix = rotation_matrix.reshape(-1, 4, 4)
+
+    rmat_t = torch.transpose(rotation_matrix, 1, 2)
+
+    mask_d2 = rmat_t[:, 2, 2] < 0
+
+    mask_d0_d1 = rmat_t[:, 0, 0] > rmat_t[:, 1, 1]
+    mask_d0_nd1 = rmat_t[:, 0, 0] < -rmat_t[:, 1, 1]
+
+    t0 = 1 + rmat_t[:, 0, 0] - rmat_t[:, 1, 1] - rmat_t[:, 2, 2]
+    q0 = torch.stack([rmat_t[:, 1, 2] - rmat_t[:, 2, 1],
+                      t0, rmat_t[:, 0, 1] + rmat_t[:, 1, 0],
+                      rmat_t[:, 2, 0] + rmat_t[:, 0, 2]], -1)
+    t0_rep = t0.unsqueeze(1).repeat((1, 4))
+
+    t1 = 1 - rmat_t[:, 0, 0] + rmat_t[:, 1, 1] - rmat_t[:, 2, 2]
+    q1 = torch.stack([rmat_t[:, 2, 0] - rmat_t[:, 0, 2],
+                      rmat_t[:, 0, 1] + rmat_t[:, 1, 0],
+                      t1, rmat_t[:, 1, 2] + rmat_t[:, 2, 1]], -1)
+    t1_rep = t1.unsqueeze(1).repeat((1, 4))
+
+    t2 = 1 - rmat_t[:, 0, 0] - rmat_t[:, 1, 1] + rmat_t[:, 2, 2]
+    q2 = torch.stack([rmat_t[:, 0, 1] - rmat_t[:, 1, 0],
+                      rmat_t[:, 2, 0] + rmat_t[:, 0, 2],
+                      rmat_t[:, 1, 2] + rmat_t[:, 2, 1], t2], -1)
+    t2_rep = t2.unsqueeze(1).repeat((1, 4))
+
+    t3 = 1 + rmat_t[:, 0, 0] + rmat_t[:, 1, 1] + rmat_t[:, 2, 2]
+    q3 = torch.stack([t3, rmat_t[:, 1, 2] - rmat_t[:, 2, 1],
+                      rmat_t[:, 2, 0] - rmat_t[:, 0, 2],
+                      rmat_t[:, 0, 1] - rmat_t[:, 1, 0]], -1)
+    t3_rep = t3.unsqueeze(1).repeat((1, 4))
+
+    mask_c0 = mask_d2 * mask_d0_d1
+    mask_c1 = mask_d2 * ~mask_d0_d1
+    mask_c2 = ~mask_d2 * mask_d0_nd1
+    mask_c3 = ~mask_d2 * ~mask_d0_nd1
+    mask_c0 = mask_c0.unsqueeze(1).type_as(q0)
+    mask_c1 = mask_c1.unsqueeze(1).type_as(q1)
+    mask_c2 = mask_c2.unsqueeze(1).type_as(q2)
+    mask_c3 = mask_c3.unsqueeze(1).type_as(q3)
+
+    q = q0 * mask_c0 + q1 * mask_c1 + q2 * mask_c2 + q3 * mask_c3
+    q /= torch.sqrt(t0_rep * mask_c0 + t1_rep * mask_c1 +  
+                    t2_rep * mask_c2 + t3_rep * mask_c3)
+    q *= 0.5
+    return q
