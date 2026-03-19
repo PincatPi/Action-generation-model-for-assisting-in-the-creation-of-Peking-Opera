@@ -1,24 +1,8 @@
 # -*- coding: utf-8 -*-
 
-# Max-Planck-Gesellschaft zur Förderung der Wissenschaften e.V. (MPG) is
-# holder of all proprietary rights on this computer program.
-# You can only use this computer program if you have closed
-# a license agreement with MPG or you get the right to use the computer
-# program from someone who is authorized to grant you that right.
-# Any use of the computer program without a valid license is prohibited and
-# liable to prosecution.
-#
-# Copyright©2019 Max-Planck-Gesellschaft zur Förderung
-# der Wissenschaften e.V. (MPG). acting on behalf of its Max Planck Institute
-# for Intelligent Systems. All rights reserved.
-#
-# Contact: ps-license@tuebingen.mpg.de
-
 import argparse
 from yacs.config import CfgNode as CN
 
-# CONSTANTS
-# You may modify them at will
 VIBE_DB_DIR = 'data/vibe_db'
 AMASS_DIR = 'data/amass'
 INSTA_DIR = 'data/insta_variety'
@@ -28,7 +12,6 @@ PENNACTION_DIR = 'data/penn_action'
 POSETRACK_DIR = 'data/posetrack'
 VIBE_DATA_DIR = 'data/vibe_data'
 
-# Configuration variables
 cfg = CN()
 
 cfg.OUTPUT_DIR = 'results'
@@ -59,13 +42,11 @@ cfg.TRAIN.RESUME = ''
 cfg.TRAIN.NUM_ITERS_PER_EPOCH = 1000
 cfg.TRAIN.LR_PATIENCE = 5
 
-# <====== generator optimizer
 cfg.TRAIN.GEN_OPTIM = 'Adam'
 cfg.TRAIN.GEN_LR = 1e-4
 cfg.TRAIN.GEN_WD = 1e-4
 cfg.TRAIN.GEN_MOMENTUM = 0.9
 
-# <====== motion discriminator optimizer
 cfg.TRAIN.MOT_DISCR = CN()
 cfg.TRAIN.MOT_DISCR.OPTIM = 'SGD'
 cfg.TRAIN.MOT_DISCR.LR = 1e-2
@@ -95,7 +76,6 @@ cfg.MODEL = CN()
 
 cfg.MODEL.TEMPORAL_TYPE = 'gru'
 
-# GRU model hyperparams
 cfg.MODEL.TGRU = CN()
 cfg.MODEL.TGRU.NUM_LAYERS = 1
 cfg.MODEL.TGRU.ADD_LINEAR = False
@@ -105,9 +85,6 @@ cfg.MODEL.TGRU.BIDIRECTIONAL = False
 
 
 def get_cfg_defaults():
-    """Get a yacs CfgNode object with default values for my_project."""
-    # Return a clone so that the defaults will not be altered
-    # This is for the "local variable" use pattern
     return cfg.clone()
 
 
