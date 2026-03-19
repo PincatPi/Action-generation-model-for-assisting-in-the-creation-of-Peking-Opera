@@ -31,8 +31,11 @@ class Evaluator():
 
     def validate(self):
         self.model.eval()
+
         start = time.time()
+
         summary_string = ''
+
         bar = Bar('Validation', fill='#', max=len(self.test_loader))
 
         if self.evaluation_accumulators is not None:
@@ -42,10 +45,12 @@ class Evaluator():
         J_regressor = torch.from_numpy(np.load(osp.join(VIBE_DATA_DIR, 'J_regressor_h36m.npy'))).float()
 
         for i, target in enumerate(self.test_loader):
+
             move_dict_to_device(target, self.device)
 
             with torch.no_grad():
                 inp = target['features']
+
                 preds = self.model(inp, J_regressor=J_regressor)
 
                 n_kp = preds[-1]['kp_3d'].shape[-2]
@@ -54,59 +59,36 @@ class Evaluator():
                 pred_verts = preds[-1]['verts'].view(-1, 6890, 3).cpu().numpy()
                 target_theta = target['theta'].view(-1, 85).cpu().numpy()
 
+
                 self.evaluation_accumulators['pred_verts'].append(pred_verts)
                 self.evaluation_accumulators['target_theta'].append(target_theta)
+
                 self.evaluation_accumulators['pred_j3d'].append(pred_j3d)
                 self.evaluation_accumulators['target_j3d'].append(target_j3d)
 
             batch_time = time.time() - start
+
             summary_string = f'({i + 1}/{len(self.test_loader)}) | batch: {batch_time * 10.0:.4}ms | ' \
                              f'Total: {bar.elapsed_td} | ETA: {bar.eta_td:}'
+
             bar.suffix = summary_string
             bar.next()
 
         bar.finish()
-        logger.info(summary_string)
+
+        return self.evaluation_accumulators
 
     def evaluate(self):
-        for k, v in self.evaluation_accumulators.items():
-            self.evaluation_accumulators[k] = np.vstack(v)
+        results = {}
+        for k,v in self.evaluation_accumulators.items():
+            self.evaluation_accumulators[k] = np.concatenate(v, axis=0)
 
-        pred_j3ds = self.evaluation_accumulators['pred_j3d']
-        target_j3ds = self.evaluation_accumulators['target_j3d']
+        pred_j3d = self.evaluation_accumulators['pred_j3d']
+        target_j3d = self.evaluation_accumulators['target_j3d']
 
-        pred_j3ds = torch.from_numpy(pred_j3ds).float()
-        target_j3ds = torch.from_numpy(target_j3ds).float()
-
-        print(f'Evaluating on {pred_j3ds.shape[0]} number of poses...')
-        pred_pelvis = (pred_j3ds[:,[2],:] + pred_j3ds[:,[3],:]) / 2.0
-        target_pelvis = (target_j3ds[:,[2],:] + target_j3ds[:,[3],:]) / 2.0
-
-        pred_j3ds -= pred_pelvis
-        target_j3ds -= target_pelvis
-
-        errors = torch.sqrt(((pred_j3ds - target_j3ds) ** 2).sum(dim=-1)).mean(dim=-1).cpu().numpy()
-        S1_hat = batch_compute_similarity_transform_torch(pred_j3ds, target_j3ds)
-        errors_pa = torch.sqrt(((S1_hat - target_j3ds) ** 2).sum(dim=-1)).mean(dim=-1).cpu().numpy()
         pred_verts = self.evaluation_accumulators['pred_verts']
         target_theta = self.evaluation_accumulators['target_theta']
 
-        m2mm = 1000
+        results['mpjpe'] = np.mean(np.sqrt(np.sum((pred_j3d - target_j3d) ** 2, axis=2)))
 
-        pve = np.mean(compute_error_verts(target_theta=target_theta, pred_verts=pred_verts)) * m2mm
-        accel = np.mean(compute_accel(pred_j3ds)) * m2mm
-        accel_err = np.mean(compute_error_accel(joints_pred=pred_j3ds, joints_gt=target_j3ds)) * m2mm
-        mpjpe = np.mean(errors) * m2mm
-        pa_mpjpe = np.mean(errors_pa) * m2mm
-
-        eval_dict = {
-            'mpjpe': mpjpe,
-            'pa-mpjpe': pa_mpjpe,
-            'pve': pve,
-            'accel': accel,
-            'accel_err': accel_err
-        }
-
-        log_str = ' '.join([f'{k.upper()}: {v:.4f},'for k,v in eval_dict.items()])
-        print(log_str)
-        return eval_dict
+        return results

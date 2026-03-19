@@ -6,7 +6,6 @@ import time
 import torch
 import joblib
 import shutil
-import colorsys
 import argparse
 import numpy as np
 from tqdm import tqdm
@@ -125,29 +124,60 @@ def main(args):
         dataloader = DataLoader(dataset, batch_size=args.vibe_batch_size, num_workers=16)
 
         with torch.no_grad():
+            pred_cam, orig_cam, verts, pose, betas, joints3d = [], [], [], [], [], []
+
             for batch in dataloader:
                 batch = batch.unsqueeze(0)
                 batch = batch.to(device)
-                preds = model(batch)
 
-        vibe_results[person_id] = {}
-        vibe_results[person_id]['pred_cam'] = preds[-1]['pred_cam']
-        vibe_results[person_id]['orig_cam'] = preds[-1]['orig_cam']
-        vibe_results[person_id]['verts'] = preds[-1]['verts']
-        vibe_results[person_id]['pose'] = preds[-1]['pose']
-        vibe_results[person_id]['betas'] = preds[-1]['betas']
-        vibe_results[person_id]['joints3d'] = preds[-1]['kp_3d']
-        vibe_results[person_id]['joints2d'] = joints2d
-        vibe_results[person_id]['frames'] = frames
-        vibe_results[person_id]['bbox'] = bboxes
+                predictions = model(batch)
+
+                for pred in predictions:
+                    pred_cam.append(pred['pred_cam'])
+                    verts.append(pred['verts'])
+                    pose.append(pred['pose'])
+                    betas.append(pred['betas'])
+                    joints3d.append(pred['kp_3d'])
+
+            pred_cam = torch.cat(pred_cam, dim=0)
+            verts = torch.cat(verts, dim=0)
+            pose = torch.cat(pose, dim=0)
+            betas = torch.cat(betas, dim=0)
+            joints3d = torch.cat(joints3d, dim=0)
+
+        if args.smooth:
+            verts, pose, joints3d = smooth_pose(pose.cpu().numpy(), betas.cpu().numpy())
+
+        vibe_results[person_id] = {
+            'pred_cam': pred_cam.cpu().numpy(),
+            'orig_cam': orig_cam,
+            'verts': verts,
+            'pose': pose,
+            'betas': betas.cpu().numpy(),
+            'joints3d': joints3d,
+            'bboxes': bboxes,
+            'frame_ids': frames,
+        }
+
+    print(f'VIBE completed in {time.time() - vibe_time:.2f} seconds')
+
+    shutil.rmtree(image_folder)
 
     return vibe_results
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--vid_file', type=str, help='input video path or youtube url')
-    parser.add_argument('--output_folder', type=str, default='output', help='output folder')
+    parser.add_argument('--vid_file', type=str)
+    parser.add_argument('--output_folder', type=str, default='output')
     parser.add_argument('--tracking_method', type=str, default='bbox', choices=['bbox', 'pose'])
+    parser.add_argument('--detector', type=str, default='yolo', choices=['maskrcnn', 'yolo'])
+    parser.add_argument('--yolo_img_size', type=int, default=416)
+    parser.add_argument('--tracker_batch_size', type=int, default=12)
+    parser.add_argument('--vibe_batch_size', type=int, default=450)
+    parser.add_argument('--display', action='store_true')
+    parser.add_argument('--smooth', action='store_true')
+    parser.add_argument('--staf_dir', type=str, default='/path/to/staf')
     args = parser.parse_args()
+
     main(args)
