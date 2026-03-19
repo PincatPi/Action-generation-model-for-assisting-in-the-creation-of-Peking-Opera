@@ -28,107 +28,55 @@ def quat2mat(quat):
     xy, xz, yz = x * y, x * z, y * z
 
     rotMat = torch.stack([
-        w2 + x2 - y2 - z2, 2 * xy - 2 * wz, 2 * wy + 2 * xz, 2 * wz + 2 * xy,
-        w2 - x2 + y2 - z2, 2 * yz - 2 * wx, 2 * xz - 2 * wy, 2 * wx + 2 * yz,
-        w2 - x2 - y2 + z2
+        w2 + x2 - y2 - z2, 2 * xy - 2 * wz, 2 * wy + 2 * xz,
+        2 * wz + 2 * xy, w2 - x2 + y2 - z2, 2 * yz - 2 * wx,
+        2 * xz - 2 * wy, 2 * wx + 2 * yz, w2 - x2 - y2 + z2
     ], dim=1).view(batch_size, 3, 3)
+
     return rotMat
 
 
 def rotation_matrix_to_angle_axis(rotation_matrix):
-    if rotation_matrix.shape[1:] == (3,3):
-        rot_mat = rotation_matrix.reshape(-1, 3, 3)
-        hom = torch.tensor([0, 0, 1], dtype=torch.float32,
-                           device=rotation_matrix.device).reshape(1, 3, 1).expand(rot_mat.shape[0], -1, -1)
-        rotation_matrix = torch.cat([rot_mat, hom], dim=-1)
-
     quaternion = rotation_matrix_to_quaternion(rotation_matrix)
     aa = quaternion_to_angle_axis(quaternion)
-    aa[torch.isnan(aa)] = 0.0
     return aa
 
 
-def quaternion_to_angle_axis(quaternion: torch.Tensor) -> torch.Tensor:
-    if not torch.is_tensor(quaternion):
-        raise TypeError("Input type is not a torch.Tensor")
+def rotation_matrix_to_quaternion(rotation_matrix):
+    batch_size = rotation_matrix.shape[0]
+    num_rotations = rotation_matrix.shape[1] // 3
+    rotation_matrix = rotation_matrix.view(batch_size, num_rotations, 3, 3)
 
-    if not quaternion.shape[-1] == 4:
-        raise ValueError("Input must be a tensor of shape (*, 4)")
+    quaternion = torch.zeros(batch_size, num_rotations, 4).to(rotation_matrix.device)
 
-    quaternion = quaternion.view(-1, 4)
-    n = quaternion.shape[0]
+    for i in range(num_rotations):
+        rmat = rotation_matrix[:, i, :, :]
+        batch_size = rmat.shape[0]
+        mask0 = (rmat[:, 0, 0] > rmat[:, 1, 1]) & (rmat[:, 0, 0] > rmat[:, 2, 2])
+        mask1 = (~mask0) & (rmat[:, 1, 1] > rmat[:, 2, 2])
+        mask2 = (~mask0) & (~mask1)
 
-    w, x, y, z = quaternion[:, 0], quaternion[:, 1], quaternion[:, 2], quaternion[:, 3]
+        quaternion[mask0, i, 0] = torch.sqrt(1 + rmat[mask0, 0, 0] - rmat[mask0, 1, 1] - rmat[mask0, 2, 2]) / 2
+        quaternion[mask0, i, 1] = (rmat[mask0, 1, 0] - rmat[mask0, 0, 1]) / (4 * quaternion[mask0, i, 0])
+        quaternion[mask0, i, 2] = (rmat[mask0, 0, 2] - rmat[mask0, 2, 0]) / (4 * quaternion[mask0, i, 0])
+        quaternion[mask0, i, 3] = (rmat[mask0, 2, 1] - rmat[mask0, 1, 2]) / (4 * quaternion[mask0, i, 0])
 
-    sin_squared = x * x + y * y + z * z
-    sin_theta = torch.sqrt(sin_squared)
-    cos_theta = w
+        quaternion[mask1, i, 0] = (rmat[mask1, 1, 0] - rmat[mask1, 0, 1]) / (4 * quaternion[mask1, i, 1])
+        quaternion[mask1, i, 1] = torch.sqrt(1 - rmat[mask1, 0, 0] + rmat[mask1, 1, 1] - rmat[mask1, 2, 2]) / 2
+        quaternion[mask1, i, 2] = (rmat[mask1, 2, 1] - rmat[mask1, 1, 2]) / (4 * quaternion[mask1, i, 1])
+        quaternion[mask1, i, 3] = (rmat[mask1, 0, 2] - rmat[mask1, 2, 0]) / (4 * quaternion[mask1, i, 1])
 
-    two_theta = 2.0 * torch.where(
-        cos_theta < 0.0,
-        torch.atan2(-sin_theta, -cos_theta),
-        torch.atan2(sin_theta, cos_theta)
-    )
+        quaternion[mask2, i, 0] = (rmat[mask2, 0, 2] - rmat[mask2, 2, 0]) / (4 * quaternion[mask2, i, 2])
+        quaternion[mask2, i, 1] = (rmat[mask2, 2, 1] - rmat[mask2, 1, 2]) / (4 * quaternion[mask2, i, 2])
+        quaternion[mask2, i, 2] = torch.sqrt(1 - rmat[mask2, 0, 0] - rmat[mask2, 1, 1] + rmat[mask2, 2, 2]) / 2
+        quaternion[mask2, i, 3] = (rmat[mask2, 1, 0] - rmat[mask2, 0, 1]) / (4 * quaternion[mask2, i, 2])
 
-    k_pos = two_theta / sin_theta
-    k_neg = 2.0 * torch.ones_like(sin_theta)
-    k = torch.where(sin_squared > 0.0, k_pos, k_neg)
+    return quaternion.view(batch_size, -1)
 
-    angle_axis = torch.zeros(n, 3, device=quaternion.device)
-    angle_axis[:, 0] = x * k
-    angle_axis[:, 1] = y * k
-    angle_axis[:, 2] = z * k
+
+def quaternion_to_angle_axis(quaternion):
+    quaternion = quaternion / torch.norm(quaternion, dim=1, keepdim=True)
+    angle = 2 * torch.acos(quaternion[:, 0:1])
+    axis = quaternion[:, 1:4] / torch.sin(angle / 2 + 1e-8)
+    angle_axis = angle * axis
     return angle_axis
-
-
-def rotation_matrix_to_quaternion(rotation_matrix: torch.Tensor) -> torch.Tensor:
-    if rotation_matrix.shape[-1] != 4:
-        rotation_matrix = rotation_matrix.reshape(-1, 3, 4)
-    else:
-        rotation_matrix = rotation_matrix.reshape(-1, 4, 4)
-
-    rmat_t = torch.transpose(rotation_matrix, 1, 2)
-
-    mask_d2 = rmat_t[:, 2, 2] < 0
-
-    mask_d0_d1 = rmat_t[:, 0, 0] > rmat_t[:, 1, 1]
-    mask_d0_nd1 = rmat_t[:, 0, 0] < -rmat_t[:, 1, 1]
-
-    t0 = 1 + rmat_t[:, 0, 0] - rmat_t[:, 1, 1] - rmat_t[:, 2, 2]
-    q0 = torch.stack([rmat_t[:, 1, 2] - rmat_t[:, 2, 1],
-                      t0, rmat_t[:, 0, 1] + rmat_t[:, 1, 0],
-                      rmat_t[:, 2, 0] + rmat_t[:, 0, 2]], -1)
-    t0_rep = t0.unsqueeze(1).repeat((1, 4))
-
-    t1 = 1 - rmat_t[:, 0, 0] + rmat_t[:, 1, 1] - rmat_t[:, 2, 2]
-    q1 = torch.stack([rmat_t[:, 2, 0] - rmat_t[:, 0, 2],
-                      rmat_t[:, 0, 1] + rmat_t[:, 1, 0],
-                      t1, rmat_t[:, 1, 2] + rmat_t[:, 2, 1]], -1)
-    t1_rep = t1.unsqueeze(1).repeat((1, 4))
-
-    t2 = 1 - rmat_t[:, 0, 0] - rmat_t[:, 1, 1] + rmat_t[:, 2, 2]
-    q2 = torch.stack([rmat_t[:, 0, 1] - rmat_t[:, 1, 0],
-                      rmat_t[:, 2, 0] + rmat_t[:, 0, 2],
-                      rmat_t[:, 1, 2] + rmat_t[:, 2, 1], t2], -1)
-    t2_rep = t2.unsqueeze(1).repeat((1, 4))
-
-    t3 = 1 + rmat_t[:, 0, 0] + rmat_t[:, 1, 1] + rmat_t[:, 2, 2]
-    q3 = torch.stack([t3, rmat_t[:, 1, 2] - rmat_t[:, 2, 1],
-                      rmat_t[:, 2, 0] - rmat_t[:, 0, 2],
-                      rmat_t[:, 0, 1] - rmat_t[:, 1, 0]], -1)
-    t3_rep = t3.unsqueeze(1).repeat((1, 4))
-
-    mask_c0 = mask_d2 * mask_d0_d1
-    mask_c1 = mask_d2 * ~mask_d0_d1
-    mask_c2 = ~mask_d2 * mask_d0_nd1
-    mask_c3 = ~mask_d2 * ~mask_d0_nd1
-    mask_c0 = mask_c0.unsqueeze(1).type_as(q0)
-    mask_c1 = mask_c1.unsqueeze(1).type_as(q1)
-    mask_c2 = mask_c2.unsqueeze(1).type_as(q2)
-    mask_c3 = mask_c3.unsqueeze(1).type_as(q3)
-
-    q = q0 * mask_c0 + q1 * mask_c1 + q2 * mask_c2 + q3 * mask_c3
-    q /= torch.sqrt(t0_rep * mask_c0 + t1_rep * mask_c1 +  
-                    t2_rep * mask_c2 + t3_rep * mask_c3)
-    q *= 0.5
-    return q
