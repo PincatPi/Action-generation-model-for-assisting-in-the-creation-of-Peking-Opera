@@ -43,25 +43,38 @@ class Evaluator():
 
         bar = Bar('Validation', fill='#', max=len(self.test_loader))
 
-        if self.evaluation_accumulators is not None:
-            for k,v in self.evaluation_accumulators.items():
-                self.evaluation_accumulators[k] = []
+        accumulators = dict.fromkeys(self.evaluation_accumulators, [])
 
-        J_regressor = torch.from_numpy(np.load(osp.join(VIBE_DATA_DIR, 'J_regressor_h36m.npy'))).float()
-
-        for i, target in enumerate(self.test_loader):
-            move_dict_to_device(target, self.device)
+        for batch in self.test_loader:
+            batch = move_dict_to_device(batch, self.device)
 
             with torch.no_grad():
-                inp = target['features']
-                preds = self.model(inp, J_regressor=J_regressor)
+                preds = self.model(batch)
 
-            bar.suffix = f'[{i}/{len(self.test_loader)}]'
+            if 'theta' in preds:
+                pred_cam = preds['theta'][:, :3]
+                pred_pose = preds['theta'][:, 3:75]
+                pred_betas = preds['theta'][:, 75:]
+
+            if 'verts' in preds:
+                pred_verts = preds['verts']
+                accumulators['pred_verts'].append(pred_verts.cpu().numpy())
+
+            if 'kp_3d' in preds:
+                pred_j3d = preds['kp_3d']
+                accumulators['pred_j3d'].append(pred_j3d.cpu().numpy())
+
+            if 'target_theta' in batch:
+                accumulators['target_theta'].append(batch['target_theta'].cpu().numpy())
+
+            if 'target_j3d' in batch:
+                accumulators['target_j3d'].append(batch['target_j3d'].cpu().numpy())
+
             bar.next()
 
         bar.finish()
 
-        return summary_string
+        for key in accumulators:
+            accumulators[key] = np.concatenate(accumulators[key], axis=0)
 
-    def run(self):
-        self.validate()
+        return accumulators

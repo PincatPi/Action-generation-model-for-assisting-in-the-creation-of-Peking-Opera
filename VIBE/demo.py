@@ -40,98 +40,49 @@ def main(args):
 
     if video_file.startswith('https://www.youtube.com'):
         print(f'Donwloading YouTube video "{video_file}"')
-        video_file = download_youtube_clip(video_file, '/tmp')
-        if video_file is None:
-            exit('Youtube url is not valid!')
-        print(f'YouTube Video has been downloaded to {video_file}...')
+        video_file = download_youtube_clip(video_file)
 
-    if not os.path.isfile(video_file):
-        exit(f'Input video "{video_file}" does not exist!')
-
-    output_path = os.path.join(args.output_folder, os.path.basename(video_file).replace('.mp4', ''))
-    os.makedirs(output_path, exist_ok=True)
-
-    image_folder, num_frames, img_shape = video_to_images(video_file, return_info=True)
-
-    print(f'Input video number of frames {num_frames}')
-    orig_height, orig_width = img_shape[:2]
-
-    total_time = time.time()
-
-    bbox_scale = 1.1
-    if args.tracking_method == 'pose':
-        if not os.path.isabs(video_file):
-            video_file = os.path.join(os.getcwd(), video_file)
-        tracking_results = run_posetracker(video_file, staf_folder=args.staf_dir, display=args.display)
+    if os.path.isfile(video_file):
+        video_path = video_file
     else:
-        mot = MPT(
-            device=device,
-            batch_size=args.tracker_batch_size,
-            display=args.display,
-            detector_type=args.detector,
-            output_format='dict',
-            yolo_img_size=args.yolo_img_size,
-        )
-        tracking_results = mot(image_folder)
+        print(f'Input video "{video_file}" does not exist')
+        exit(0)
 
-    for person_id in list(tracking_results.keys()):
-        if tracking_results[person_id]['frames'].shape[0] < MIN_NUM_FRAMES:
-            del tracking_results[person_id]
+    image_folder, num_frames, img_shape = video_to_images(video_path)
+    print(f'Input video file is {video_file}')
+    print(f'Number of frames {num_frames}')
 
-    if len(tracking_results) == 0:
-        print('No tracks found in the video')
-        return
-
-    model = VIBE_Demo(
-        seqlen=16,
-        n_layers=2,
-        hidden_size=1024,
-        pretrained=args.ckpt,
-    ).to(device)
-
+    model = VIBE_Demo(seqlen=16).to(device)
+    model_file = os.path.join(VIBE_DATA_DIR, 'vibe_model_w_3dpw.pth.tar')
+    model.load_state_dict(torch.load(model_file))
     model.eval()
 
-    for person_id in tqdm(tracking_results.keys()):
-        print(f'Processing person id {person_id}')
-        bboxes = tracking_results[person_id]['bbox']
-        frames = tracking_results[person_id]['frames']
+    dataset = Inference(
+        image_folder=image_folder,
+        frames=None,
+        bboxes=None,
+        kp2d=None,
+    )
 
-        dataset = Inference(
-            image_folder=image_folder,
-            frames=frames,
-            bboxes=bboxes,
-            scale=bbox_scale,
-        )
+    inference_loader = DataLoader(dataset=dataset, batch_size=1, shuffle=False)
 
-        batch_size = args.batch_size
-        data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=8)
+    print('Running VIBE inference...')
+    with torch.no_grad():
+        for batch in tqdm(inference_loader):
+            batch = move_dict_to_device(batch, device)
+            output = model(batch)
 
-        with torch.no_grad():
-            pred_cam, orig_cam, verts, pose, betas, joints3d = [], [], [], [], [], []
-            for batch in data_loader:
-                batch = batch.unsqueeze(0)
-                batch = batch.to(device)
-                batch = batch.reshape(-1, 16, 224, 224)
-                output = model(batch)[-1]
-                pred_cam.append(output['pred_cam'])
-                verts.append(output['verts'])
-                pose.append(output['pose'])
-                betas.append(output['betas'])
+    print('Saving output...')
+    output_file = os.path.join(args.output_folder, 'vibe_output.pkl')
+    joblib.dump(output, output_file)
 
-    print(f'Total time: {time.time() - total_time}')
-
+    print('Done!')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--vid_file', type=str, help='input video path or youtube url')
-    parser.add_argument('--output_folder', type=str, default='output', help='output folder')
-    parser.add_argument('--ckpt', type=str, default='data/vibe_data/vibe_model_w_3dpw.pth.tar', help='checkpoint path')
-    parser.add_argument('--batch_size', type=int, default=8, help='batch size')
-    parser.add_argument('--display', action='store_true', help='display results')
-    parser.add_argument('--tracking_method', type=str, default='mpt', choices=['mpt', 'pose'], help='tracking method')
-    parser.add_argument('--detector', type=str, default='yolo', choices=['yolo', 'maskrcnn'], help='detector type')
-    parser.add_argument('--yolo_img_size', type=int, default=416, help='yolo image size')
-    parser.add_argument('--tracker_batch_size', type=int, default=12, help='tracker batch size')
+    parser.add_argument('--vid_file', type=str, help='input video path or youtube link')
+    parser.add_argument('--output_folder', type=str, default='output', help='output folder to write results')
+    parser.add_argument('--display', action='store_true', help='visualize the results')
     args = parser.parse_args()
 
     main(args)
