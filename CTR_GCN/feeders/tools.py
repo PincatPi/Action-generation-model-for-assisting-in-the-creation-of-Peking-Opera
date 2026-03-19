@@ -46,14 +46,14 @@ def mean_subtractor(data_numpy, mean):
     valid_frame = (data_numpy != 0).sum(axis=3).sum(axis=2).sum(axis=0) > 0
     begin = valid_frame.argmax()
     end = len(valid_frame) - valid_frame[::-1].argmax()
-    data_numpy[:, :end, :, :] = data_numpy[:, :end, :, :] - mean
+    data_numpy[:, :end] = data_numpy[:, :end] - mean
     return data_numpy
 
 
 def auto_pading(data_numpy, size, random_pad=False):
     C, T, V, M = data_numpy.shape
     if T < size:
-        begin = random.randint(0, size - T) if random_pad else 0
+        begin = np.random.randint(0, size - T) if random_pad else 0
         data_numpy_paded = np.zeros((C, size, V, M))
         data_numpy_paded[:, begin:begin + T, :, :] = data_numpy
         return data_numpy_paded
@@ -61,15 +61,15 @@ def auto_pading(data_numpy, size, random_pad=False):
         return data_numpy
 
 
-def random_choose(data_numpy, size, auto_pad=True):
+def random_choose(data_numpy, size, center=False):
     C, T, V, M = data_numpy.shape
     if T == size:
         return data_numpy
     elif T < size:
-        if auto_pad:
-            return auto_pading(data_numpy, size, random_pad=True)
-        else:
-            return data_numpy
+        return auto_pading(data_numpy, size, random_pad=True)
     else:
-        begin = random.randint(0, T - size)
+        if center:
+            begin = (T - size) // 2
+        else:
+            begin = np.random.randint(0, T - size)
         return data_numpy[:, begin:begin + size, :, :]
