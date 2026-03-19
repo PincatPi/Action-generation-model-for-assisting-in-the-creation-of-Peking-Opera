@@ -57,30 +57,6 @@ class Feeder(Dataset):
         label = self.label[index]
         data_numpy = np.array(data_numpy)
         valid_frame_num = np.sum(data_numpy.sum(0).sum(-1).sum(-1) != 0)
-        data_numpy = tools.valid_crop_resize(data_numpy, valid_frame_num, self.p_interval, self.window_size)
-        if self.random_rot:
-            data_numpy = tools.random_rot(data_numpy)
-        if self.bone:
-            from .bone_pairs import ntu_pairs
-            bone_data_numpy = np.zeros_like(data_numpy)
-            for v1, v2 in ntu_pairs:
-                bone_data_numpy[:, :, v1 - 1] = data_numpy[:, :, v1 - 1] - data_numpy[:, :, v2 - 1]
-            data_numpy = bone_data_numpy
-        if self.vel:
-            data_numpy[:, :-1] = data_numpy[:, 1:] - data_numpy[:, :-1]
-            data_numpy[:, -1] = 0
-
+        if valid_frame_num == 0:
+            return data_numpy, label, index
         return data_numpy, label, index
-
-    def top_k(self, score, top_k):
-        rank = score.argsort()
-        hit_top_k = [l in rank[i, -top_k:] for i, l in enumerate(self.label)]
-        return sum(hit_top_k) * 1.0 / len(hit_top_k)
-
-
-def import_class(name):
-    components = name.split('.')
-    mod = __import__(components[0])
-    for comp in components[1:]:
-        mod = getattr(mod, comp)
-    return mod
