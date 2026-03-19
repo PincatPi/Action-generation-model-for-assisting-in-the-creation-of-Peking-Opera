@@ -26,6 +26,7 @@ JOINT_MAP = {
     'Head (H36M)': 53, 'Nose': 24, 'Left Eye': 26,
     'Right Eye': 25, 'Left Ear': 28, 'Right Ear': 27
 }
+
 JOINT_NAMES = [
     'OP Nose', 'OP Neck', 'OP RShoulder',
     'OP RElbow', 'OP RWrist', 'OP LShoulder',
@@ -57,26 +58,15 @@ H36M_TO_J14 = H36M_TO_J17[:14]
 class SMPL(_SMPL):
     def __init__(self, *args, **kwargs):
         super(SMPL, self).__init__(*args, **kwargs)
-        joints = [JOINT_MAP[i] for i in JOINT_NAMES]
-        J_regressor_extra = np.load(JOINT_REGRESSOR_TRAIN_EXTRA)
-        self.register_buffer('J_regressor_extra', torch.tensor(J_regressor_extra, dtype=torch.float32))
-        self.joint_map = torch.tensor(joints, dtype=torch.long)
 
     def forward(self, *args, **kwargs):
-        kwargs['get_skin'] = True
         smpl_output = super(SMPL, self).forward(*args, **kwargs)
-        extra_joints = vertices2joints(self.J_regressor_extra, smpl_output.vertices)
-        joints = torch.cat([smpl_output.joints, extra_joints], dim=1)
-        joints = joints[:, self.joint_map, :]
-        output = SMPLOutput(vertices=smpl_output.vertices,
-                            global_orient=smpl_output.global_orient,
-                            body_pose=smpl_output.body_pose,
-                            joints=joints,
-                            betas=smpl_output.betas,
-                            full_pose=smpl_output.full_pose)
-        return output
+        return smpl_output
 
 
 def get_smpl_faces():
-    smpl = SMPL(SMPL_MODEL_DIR, batch_size=1, create_transl=False)
-    return smpl.faces
+    return np.load(osp.join(VIBE_DATA_DIR, 'smpl_faces.npy'))
+
+
+def get_smpl_mesh():
+    return np.load(osp.join(VIBE_DATA_DIR, 'smpl_mesh.npy'))
