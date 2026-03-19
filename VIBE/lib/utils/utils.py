@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import os
 import yaml
 import time
@@ -44,9 +42,7 @@ def iterdict(d):
 def accuracy(output, target):
     _, pred = output.topk(1)
     pred = pred.view(-1)
-
     correct = pred.eq(target).sum()
-
     return correct.item(), target.size(0) - correct.item()
 
 
@@ -84,50 +80,11 @@ def save_to_file(obj, filename, mode='w'):
 
 
 def concatenate_dicts(dict_list, dim=0):
-    rdict = dict.fromkeys(dict_list[0].keys())
-    for k in rdict.keys():
-        rdict[k] = torch.cat([d[k] for d in dict_list], dim=dim)
-    return rdict
-
-
-def bool_to_string(x: Union[List[bool],bool]) ->  Union[List[str],str]:
-    if isinstance(x, bool):
-        return [str(x)]
-    for i, j in enumerate(x):
-        x[i]=str(j)
-    return x
-
-
-def checkpoint2model(checkpoint, key='gen_state_dict'):
-    state_dict = checkpoint[key]
-    print(f'Performance of loaded model on 3DPW is {checkpoint["performance"]:.2f}mm')
-    return state_dict
-
-
-def get_optimizer(model, optim_type, lr, weight_decay, momentum):
-    if optim_type in ['sgd', 'SGD']:
-        opt = torch.optim.SGD(lr=lr, params=model.parameters(), momentum=momentum)
-    elif optim_type in ['Adam', 'adam', 'ADAM']:
-        opt = torch.optim.Adam(lr=lr, params=model.parameters(), weight_decay=weight_decay)
-    else:
-        raise ModuleNotFoundError
-    return opt
-
-
-def create_logger(logdir, phase='train'):
-    os.makedirs(logdir, exist_ok=True)
-
-    log_file = osp.join(logdir, f'{phase}_log.txt')
-
-    head = '%(asctime)-15s %(message)s'
-    logging.basicConfig(filename=log_file,
-                        format=head)
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    console = logging.StreamHandler()
-    logging.getLogger('').addHandler(console)
-
-    return logger
+    out_dict = dict_list[0].copy()
+    for i in range(1, len(dict_list)):
+        for k, v in dict_list[i].items():
+            out_dict[k] = torch.cat([out_dict[k], v], dim=dim)
+    return out_dict
 
 
 class AverageMeter(object):
@@ -143,17 +100,6 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
-
-def prepare_output_dir(cfg, cfg_file):
-    logtime = time.strftime('%d-%m-%Y_%H-%M-%S')
-    logdir = f'{logtime}_{cfg.EXP_NAME}'
-
-    logdir = osp.join(cfg.OUTPUT_DIR, logdir)
-    os.makedirs(logdir, exist_ok=True)
-    shutil.copy(src=cfg_file, dst=osp.join(cfg.OUTPUT_DIR, 'config.yaml'))
-
-    cfg.LOGDIR = logdir
-
-    save_dict_to_yaml(cfg, osp.join(cfg.LOGDIR, 'config.yaml'))
-
-    return cfg
+    def __str__(self):
+        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
+        return fmtstr.format(**self.__dict__)
