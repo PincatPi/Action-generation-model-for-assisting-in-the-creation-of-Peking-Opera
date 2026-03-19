@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import torch
 from torch import nn
 
@@ -34,7 +32,7 @@ class SelfAttention(nn.Module):
         modules.append(nn.Dropout(dropout))
 
         self.attention = nn.Sequential(*modules)
-        self.attention.apply(init_weights) 
+        self.attention.apply(init_weights)
         self.softmax = nn.Softmax(dim=-1)
 
 

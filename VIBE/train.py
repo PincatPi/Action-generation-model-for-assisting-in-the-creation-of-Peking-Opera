@@ -1,19 +1,3 @@
-# -*- coding: utf-8 -*-
-
-# Max-Planck-Gesellschaft zur Förderung der Wissenschaften e.V. (MPG) is
-# holder of all proprietary rights on this computer program.
-# You can only use this computer program if you have closed
-# a license agreement with MPG or you get the right to use the computer
-# program from someone who is authorized to grant you that right.
-# Any use of the computer program without a valid license is prohibited and
-# liable to prosecution.
-#
-# Copyright©2019 Max-Planck-Gesellschaft zur Förderung
-# der Wissenschaften e.V. (MPG). acting on behalf of its Max Planck Institute
-# for Intelligent Systems. All rights reserved.
-#
-# Contact: ps-license@tuebingen.mpg.de
-
 import os
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
@@ -48,7 +32,6 @@ def main(cfg):
 
     logger.info(pprint.pformat(cfg))
 
-    # cudnn related setting
     cudnn.benchmark = cfg.CUDNN.BENCHMARK
     torch.backends.cudnn.deterministic = cfg.CUDNN.DETERMINISTIC
     torch.backends.cudnn.enabled = cfg.CUDNN.ENABLED
@@ -56,10 +39,8 @@ def main(cfg):
     writer = SummaryWriter(log_dir=cfg.LOGDIR)
     writer.add_text('config', pprint.pformat(cfg), 0)
 
-    # ========= Dataloaders ========= #
     data_loaders = get_data_loaders(cfg)
 
-    # ========= Compile Loss ========= #
     loss = VIBELoss(
         e_loss_weight=cfg.LOSS.KP_2D_W,
         e_3d_loss_weight=cfg.LOSS.KP_3D_W,
@@ -68,7 +49,6 @@ def main(cfg):
         d_motion_loss_weight=cfg.LOSS.D_MOTION_LOSS_W,
     )
 
-    # ========= Initialize networks, optimizers and lr_schedulers ========= #
     generator = VIBE(
         n_layers=cfg.MODEL.TGRU.NUM_LAYERS,
         batch_size=cfg.TRAIN.BATCH_SIZE,
@@ -98,14 +78,9 @@ def main(cfg):
     )
 
     motion_discriminator = MotionDiscriminator(
-        rnn_size=cfg.TRAIN.MOT_DISCR.HIDDEN_SIZE,
-        input_size=69,
+        input_size=63,
+        hidden_size=cfg.TRAIN.MOT_DISCR.HIDDEN_SIZE,
         num_layers=cfg.TRAIN.MOT_DISCR.NUM_LAYERS,
-        output_size=1,
-        feature_pool=cfg.TRAIN.MOT_DISCR.FEATURE_POOL,
-        attention_size=None if cfg.TRAIN.MOT_DISCR.FEATURE_POOL !='attention' else cfg.TRAIN.MOT_DISCR.ATT.SIZE,
-        attention_layers=None if cfg.TRAIN.MOT_DISCR.FEATURE_POOL !='attention' else cfg.TRAIN.MOT_DISCR.ATT.LAYERS,
-        attention_dropout=None if cfg.TRAIN.MOT_DISCR.FEATURE_POOL !='attention' else cfg.TRAIN.MOT_DISCR.ATT.DROPOUT
     ).to(cfg.DEVICE)
 
     dis_motion_optimizer = get_optimizer(
@@ -113,50 +88,31 @@ def main(cfg):
         optim_type=cfg.TRAIN.MOT_DISCR.OPTIM,
         lr=cfg.TRAIN.MOT_DISCR.LR,
         weight_decay=cfg.TRAIN.MOT_DISCR.WD,
-        momentum=cfg.TRAIN.MOT_DISCR.MOMENTUM
+        momentum=cfg.TRAIN.MOT_DISCR.MOMENTUM,
     )
 
-    motion_lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        dis_motion_optimizer,
-        mode='min',
-        factor=0.1,
-        patience=cfg.TRAIN.LR_PATIENCE,
-        verbose=True,
-    )
-
-    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        gen_optimizer,
-        mode='min',
-        factor=0.1,
-        patience=cfg.TRAIN.LR_PATIENCE,
-        verbose=True,
-    )
-
-    # ========= Start Training ========= #
-    Trainer(
+    trainer = Trainer(
         data_loaders=data_loaders,
         generator=generator,
         motion_discriminator=motion_discriminator,
-        criterion=loss,
+        gen_optimizer=gen_optimizer,
         dis_motion_optimizer=dis_motion_optimizer,
         dis_motion_update_steps=cfg.TRAIN.MOT_DISCR.UPDATE_STEPS,
-        gen_optimizer=gen_optimizer,
-        start_epoch=cfg.TRAIN.START_EPOCH,
         end_epoch=cfg.TRAIN.END_EPOCH,
+        criterion=loss,
+        start_epoch=cfg.TRAIN.START_EPOCH,
         device=cfg.DEVICE,
         writer=writer,
         debug=cfg.DEBUG,
+        debug_freq=cfg.DEBUG_FREQ,
         logdir=cfg.LOGDIR,
-        lr_scheduler=lr_scheduler,
-        motion_lr_scheduler=motion_lr_scheduler,
         resume=cfg.TRAIN.RESUME,
         num_iters_per_epoch=cfg.TRAIN.NUM_ITERS_PER_EPOCH,
-        debug_freq=cfg.DEBUG_FREQ,
-    ).fit()
+    )
+
+    trainer.train()
 
 
 if __name__ == '__main__':
     cfg, cfg_file = parse_args()
-    cfg = prepare_output_dir(cfg, cfg_file)
-
     main(cfg)
