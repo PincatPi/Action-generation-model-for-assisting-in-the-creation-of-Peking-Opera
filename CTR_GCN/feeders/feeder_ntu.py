@@ -1,5 +1,7 @@
 import numpy as np
+
 from torch.utils.data import Dataset
+
 from feeders import tools
 
 
@@ -7,6 +9,7 @@ class Feeder(Dataset):
     def __init__(self, data_path, label_path=None, p_interval=1, split='train', random_choose=False, random_shift=False,
                  random_move=False, random_rot=False, window_size=-1, normalization=False, debug=False, use_mmap=False,
                  bone=False, vel=False):
+
         self.debug = debug
         self.data_path = data_path
         self.label_path = label_path
@@ -57,6 +60,35 @@ class Feeder(Dataset):
         label = self.label[index]
         data_numpy = np.array(data_numpy)
         valid_frame_num = np.sum(data_numpy.sum(0).sum(-1).sum(-1) != 0)
+
         if valid_frame_num == 0:
-            return data_numpy, label, index
+            return np.zeros((3, 64, 25, 2)), label, index
+
+        if self.split == 'train':
+            if self.random_rot:
+                data_numpy = tools.random_rotation(data_numpy)
+            if self.random_choose:
+                data_numpy = tools.random_choose(data_numpy, self.window_size)
+            elif self.window_size > 0:
+                data_numpy = tools.auto_pading(data_numpy, self.window_size)
+            if self.random_shift:
+                data_numpy = tools.random_shift(data_numpy)
+            if self.random_move:
+                data_numpy = tools.random_move(data_numpy)
+
+        data_numpy = tools.valid_crop_resize(data_numpy, valid_frame_num, self.p_interval, self.window_size)
+
+        if self.normalization:
+            data_numpy = (data_numpy - self.mean_map) / self.std_map
+
+        if self.bone:
+            bone_data = np.zeros_like(data_numpy)
+            for v1, v2 in self.bone_pairs:
+                bone_data[:, :, v1 - 1] = data_numpy[:, :, v2 - 1] - data_numpy[:, :, v1 - 1]
+            data_numpy = bone_data
+
+        if self.vel:
+            data_numpy[:, :-1] = data_numpy[:, 1:] - data_numpy[:, :-1]
+            data_numpy[:, -1] = 0
+
         return data_numpy, label, index
