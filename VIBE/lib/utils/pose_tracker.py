@@ -6,7 +6,12 @@ import numpy as np
 import os.path as osp
 
 
-def run_openpose(video_file, output_folder, staf_folder, vis=False):
+def run_openpose(
+        video_file,
+        output_folder,
+        staf_folder,
+        vis=False,
+):
     pwd = os.getcwd()
 
     os.chdir(staf_folder)
@@ -28,48 +33,19 @@ def run_openpose(video_file, output_folder, staf_folder, vis=False):
     os.chdir(pwd)
 
 
-def read_posetrack_keypoints(output_folder):
-    people = dict()
+def run_posetracker(video_file, output_folder, staf_folder, vis=False):
+    run_openpose(video_file, output_folder, staf_folder, vis)
 
-    for idx, result_file in enumerate(sorted(os.listdir(output_folder))):
-        json_file = osp.join(output_folder, result_file)
-        data = json.load(open(json_file))
-        for person in data['people']:
-            person_id = person['person_id'][0]
-            joints2d = person['pose_keypoints_2d']
-            if person_id in people.keys():
-                people[person_id]['joints2d'].append(joints2d)
-                people[person_id]['frames'].append(idx)
-            else:
-                people[person_id] = {
-                    'joints2d': [],
-                    'frames': [],
-                }
-                people[person_id]['joints2d'].append(joints2d)
-                people[person_id]['frames'].append(idx)
+    json_files = sorted([f for f in os.listdir(output_folder) if f.endswith('.json')])
 
-    for k in people.keys():
-        people[k]['joints2d'] = np.array(people[k]['joints2d']).reshape((len(people[k]['joints2d']), -1, 3))
-        people[k]['frames'] = np.array(people[k]['frames'])
+    keypoints = []
+    for json_file in json_files:
+        with open(osp.join(output_folder, json_file), 'r') as f:
+            data = json.load(f)
 
-    return people
+        if len(data['people']) == 0:
+            keypoints.append(np.zeros((21, 3)))
+        else:
+            keypoints.append(np.array(data['people'][0]['pose_keypoints_2d']).reshape(-1, 3)[:21])
 
-
-def run_posetracker(video_file, staf_folder, posetrack_output_folder='/tmp', display=False):
-    posetrack_output_folder = os.path.join(
-        posetrack_output_folder,
-        f'{os.path.basename(video_file)}_posetrack'
-    )
-
-    run_openpose(
-        video_file,
-        posetrack_output_folder,
-        vis=display,
-        staf_folder=staf_folder
-    )
-
-    people_dict = read_posetrack_keypoints(posetrack_output_folder)
-
-    shutil.rmtree(posetrack_output_folder)
-
-    return people_dict
+    return np.array(keypoints)
