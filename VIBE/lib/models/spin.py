@@ -17,7 +17,8 @@ class Bottleneck(nn.Module):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
+                               padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * 4)
@@ -27,18 +28,24 @@ class Bottleneck(nn.Module):
 
     def forward(self, x):
         residual = x
+
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
+
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu(out)
+
         out = self.conv3(out)
         out = self.bn3(out)
+
         if self.downsample is not None:
             residual = self.downsample(x)
+
         out += residual
         out = self.relu(out)
+
         return out
 
 
@@ -77,35 +84,89 @@ class HMR(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
+        mean_params = np.load(smpl_mean_params)
+        init_pose = torch.from_numpy(mean_params['pose'][:]).unsqueeze(0)
+        init_shape = torch.from_numpy(mean_params['shape'][:]).unsqueeze(0)
+        init_cam = torch.from_numpy(mean_params['cam']).unsqueeze(0)
+        self.register_buffer('init_pose', init_pose)
+        self.register_buffer('init_shape', init_shape)
+        self.register_buffer('init_cam', init_cam)
+
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False),
+                nn.Conv2d(self.inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride, bias=False),
                 nn.BatchNorm2d(planes * block.expansion),
             )
+
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
             layers.append(block(self.inplanes, planes))
+
         return nn.Sequential(*layers)
 
-    def forward(self, x, J_regressor=None):
+    def forward(self, x, init_pose=None, init_shape=None, init_cam=None, n_iter=3):
         batch_size = x.shape[0]
+
+        if init_pose is None:
+            init_pose = self.init_pose.expand(batch_size, -1)
+        if init_shape is None:
+            init_shape = self.init_shape.expand(batch_size, -1)
+        if init_cam is None:
+            init_cam = self.init_cam.expand(batch_size, -1)
+
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
+
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
+
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        return x
+
+        pred_pose = init_pose
+        pred_shape = init_shape
+        pred_cam = init_cam
+        for i in range(n_iter):
+            xc = torch.cat([x, pred_pose, pred_shape, pred_cam], 1)
+            xc = self.fc1(xc)
+            xc = self.drop1(xc)
+            xc = self.fc2(xc)
+            xc = self.drop2(xc)
+
+            pred_pose = self.decpose(xc) + pred_pose
+            pred_shape = self.decshape(xc) + pred_shape
+            pred_cam = self.deccam(xc) + pred_cam
+
+        pred_rotmat = rot6d_to_rotmat(pred_pose).view(batch_size, 24, 3, 3)
+
+        return pred_rotmat, pred_shape, pred_cam
 
 
-def hmr(smpl_mean_params=SMPL_MEAN_PARAMS):
-    model = HMR(Bottleneck, [3, 4, 6, 3], smpl_mean_params)
+def hmr(smpl_mean_params=SMPL_MEAN_PARAMS, **kwargs):
+    model = HMR(Bottleneck, [3, 4, 6, 3], smpl_mean_params, **kwargs)
     return model
+
+
+def perspective_projection(points, rotation, translation, focal_length, camera_center):
+    batch_size = points.shape[0]
+    K = torch.zeros([batch_size, 3, 3], device=points.device)
+    K[:, 0, 0] = focal_length
+    K[:, 1, 1] = focal_length
+    K[:, 2, 2] = 1.
+    K[:, :-1, -1] = camera_center
+
+    points = torch.einsum('bij,bkj->bik', points, rotation)
+    points = points + translation.unsqueeze(1)
+    points = torch.einsum('bij,bkj->bik', points, K)
+    points = points / points[:, :, -1].unsqueeze(-1)
+    points = points[:, :, :-1]
+    return points

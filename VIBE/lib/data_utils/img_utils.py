@@ -80,38 +80,48 @@ def generate_patch_image_cv(cvimg, c_x, c_y, bb_width, bb_height, patch_width, p
 
     return img_patch, trans
 
-def crop_image(image, kp_2d, center_x, center_y, width, height, patch_width, patch_height, do_augment):
-    if do_augment:
-        scale, rot, do_flip, color_scale = do_augmentation()
+def get_single_image_crop(image, bbox, scale=1.2, crop_size=224):
+    if isinstance(image, str):
+        image = cv2.cvtColor(cv2.imread(image), cv2.COLOR_BGR2RGB)
     else:
-        scale, rot, do_flip, color_scale = 1.3, 0, False, [1.0, 1.0, 1.0]
+        image = image.copy()
 
-    image, trans = generate_patch_image_cv(image, center_x, center_y, width, height, patch_width, patch_height, do_flip, scale, rot)
+    bbox_x, bbox_y, bbox_w, bbox_h = bbox
+    center = [bbox_x + bbox_w/2, bbox_y + bbox_h/2]
+    width = bbox_w * scale
+    height = bbox_h * scale
 
-    for n_jt in range(kp_2d.shape[0]):
-        kp_2d[n_jt] = trans_point2d(kp_2d[n_jt], trans)
+    trans = gen_trans_from_patch_cv(center[0], center[1], width, height, crop_size, crop_size, 1.0, 0.0, inv=False)
+    img_patch = cv2.warpAffine(image, trans, (crop_size, crop_size), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
 
-    return image, kp_2d, trans
+    img_patch = img_patch[:, :, ::-1].copy()
+    img_patch = transforms.ToTensor()(img_patch)
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    img_patch = normalize(img_patch)
 
-def transfrom_keypoints(kp_2d, center_x, center_y, width, height, patch_width, patch_height, do_augment):
-    if do_augment:
-        scale, rot, do_flip, color_scale = do_augmentation()
+    return img_patch
+
+def get_single_image_crop_demo(image, bbox, kp_2d, scale=1.2, crop_size=224):
+    if isinstance(image, str):
+        image = cv2.cvtColor(cv2.imread(image), cv2.COLOR_BGR2RGB)
     else:
-        scale, rot, do_flip, color_scale = 1.2, 0, False, [1.0, 1.0, 1.0]
+        image = image.copy()
 
-    trans = gen_trans_from_patch_cv(center_x, center_y, width, height, patch_width, patch_height, scale, rot, inv=False)
+    bbox_x, bbox_y, bbox_w, bbox_h = bbox
+    center = [bbox_x + bbox_w/2, bbox_y + bbox_h/2]
+    width = bbox_w * scale
+    height = bbox_h * scale
 
-    for n_jt in range(kp_2d.shape[0]):
-        kp_2d[n_jt] = trans_point2d(kp_2d[n_jt], trans)
+    trans = gen_trans_from_patch_cv(center[0], center[1], width, height, crop_size, crop_size, 1.0, 0.0, inv=False)
+    img_patch = cv2.warpAffine(image, trans, (crop_size, crop_size), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
 
-    return kp_2d, trans
+    if kp_2d is not None:
+        for i in range(len(kp_2d)):
+            kp_2d[i, 0:2] = trans_point2d(kp_2d[i, 0:2], trans)
 
-def normalize_2d_kp(kp_2d, crop_size):
-    kp_2d_norm = kp_2d - crop_size / 2.
-    kp_2d_norm = kp_2d_norm / (crop_size / 2.)
-    return kp_2d_norm
+    img_patch = img_patch[:, :, ::-1].copy()
+    img_patch = transforms.ToTensor()(img_patch)
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    img_patch = normalize(img_patch)
 
-def split_into_chunks(vid_names, seqlen, stride):
-    vid_names = np.array(vid_names)
-    start_indices = np.arange(0, len(vid_names) - seqlen + 1, stride)
-    return [(start_index, start_index + seqlen) for start_index in start_indices]
+    return img_patch, image, kp_2d
