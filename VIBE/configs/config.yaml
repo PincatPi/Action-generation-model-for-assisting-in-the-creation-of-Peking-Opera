@@ -26,10 +26,7 @@ TRAIN:
   DATA_2D_RATIO: 0.6
   DATASETS_2D:
     - 'Insta'
-#    - 'PoseTrack'
-#    - 'PennAction'
   DATASETS_3D:
-#    - 'ThreeDPW'
     - 'MPII3D'
   DATASET_EVAL: 'ThreeDPW'
   GEN_LR: 0.00005
