@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from __future__ import print_function
 
 import argparse
@@ -24,7 +25,6 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 from torchlight import DictAction
-
 
 try:
     import resource
@@ -92,96 +92,46 @@ def get_parser():
         type=int,
         default=1,
         help='the interval for storing models (#iteration)')
+
     parser.add_argument(
-        '--save-epoch',
-        type=int,
-        default=30,
-        help='the start epoch to save model (#iteration)')
-    parser.add_argument(
-        '--eval-interval',
-        type=int,
-        default=5,
-        help='the interval for evaluating models (#iteration)')
+        '--eval-interval', type=int, default=1, help='the interval for evaluation (#iteration)')
     parser.add_argument(
         '--print-log',
         type=str2bool,
         default=True,
         help='print logging or not')
     parser.add_argument(
-        '--show-topk',
+        '--show-top',
         type=int,
         default=[1, 5],
         nargs='+',
         help='which Top K accuracy will be shown')
 
-    parser.add_argument(
-        '--feeder', default='feeder.feeder', help='data loader will be used')
-    parser.add_argument(
-        '--num-worker',
-        type=int,
-        default=32,
-        help='the number of worker for data loader')
-    parser.add_argument(
-        '--train-feeder-args',
-        action=DictAction,
-        default=dict(),
-        help='the arguments of data loader for training')
-    parser.add_argument(
-        '--test-feeder-args',
-        action=DictAction,
-        default=dict(),
-        help='the arguments of data loader for test')
-
-    parser.add_argument('--model', default=None, help='the model will be used')
-    parser.add_argument(
-        '--model-args',
-        action=DictAction,
-        default=dict(),
-        help='the arguments of model')
-
     return parser
 
 
-class Processor():
-    def __init__(self, arg):
-        self.arg = arg
-        self.save_arg()
-        if self.arg.phase == 'train':
-            pass
+def main():
+    parser = get_parser()
+    p = parser.parse_args()
 
-    def save_arg(self):
-        pass
+    with open(p.config, 'r') as f:
+        default_arg = yaml.load(f, Loader=yaml.FullLoader)
 
-    def print_info(self):
-        pass
+    key = vars(p).keys()
+    for k in default_arg.keys():
+        if k not in key:
+            print('WRN: Argument {} not in the parser'.format(k))
+            continue
+        if vars(p)[k] != parser.get_default(k):
+            print('USING: {}={}'.format(k, vars(p)[k]))
+            continue
+        setattr(p, k, default_arg[k])
 
-    def init_device(self):
-        pass
+    init_seed(p.seed)
 
-    def load_model(self):
-        pass
-
-    def load_data(self):
-        pass
-
-    def train(self):
-        pass
-
-    def eval(self):
-        pass
-
-    def print_time(self):
-        pass
-
-    def record(self):
-        pass
-
-    def start(self):
-        pass
+    processor = Processor(p)
+    processor.start()
 
 
 if __name__ == '__main__':
-    parser = get_parser()
-    arg = parser.parse_args()
-    processor = Processor(arg)
-    processor.start()
+    main()
