@@ -74,6 +74,7 @@ def get_multiscale_spatial_graph(num_node, self_link, inward, outward):
     return A
 
 
+
 def get_uniform_graph(num_node, self_link, neighbor):
     A = normalize_digraph(edge2mat(neighbor + self_link, num_node))
     return A
