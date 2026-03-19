@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import os
 import cv2
 import torch
@@ -82,30 +80,38 @@ def generate_patch_image_cv(cvimg, c_x, c_y, bb_width, bb_height, patch_width, p
 
     return img_patch, trans
 
-def convert_cvimg_to_tensor(cvimg):
-    img = cvimg.copy()
-    img = img.astype(np.float32) / 255.
-    img = img[:, :, [2, 1, 0]]
-    img = img.transpose(2, 0, 1)
-    return torch.from_numpy(img).float()
+def crop_image(image, kp_2d, center_x, center_y, width, height, patch_width, patch_height, do_augment):
+    if do_augment:
+        scale, rot, do_flip, color_scale = do_augmentation()
+    else:
+        scale, rot, do_flip, color_scale = 1.3, 0, False, [1.0, 1.0, 1.0]
 
-def get_single_image_crop_demo(img, bbox, kp_2d=None, scale=1.0, crop_size=224):
-    crop_image, trans = generate_patch_image_cv(
-        cvimg=img.copy(),
-        c_x=bbox[0],
-        c_y=bbox[1],
-        bb_width=bbox[2],
-        bb_height=bbox[3],
-        patch_width=crop_size,
-        patch_height=crop_size,
-        do_flip=False,
-        scale=scale,
-        rot=0,
-    )
+    image, trans = generate_patch_image_cv(image, center_x, center_y, width, height, patch_width, patch_height, do_flip, scale, rot)
 
-    if kp_2d is not None:
-        for n_jt in range(kp_2d.shape[0]):
-            kp_2d[n_jt] = trans_point2d(kp_2d[n_jt], trans)
+    for n_jt in range(kp_2d.shape[0]):
+        kp_2d[n_jt] = trans_point2d(kp_2d[n_jt], trans)
 
-    crop_image = convert_cvimg_to_tensor(crop_image)
-    return crop_image, crop_image, kp_2d
+    return image, kp_2d, trans
+
+def transfrom_keypoints(kp_2d, center_x, center_y, width, height, patch_width, patch_height, do_augment):
+    if do_augment:
+        scale, rot, do_flip, color_scale = do_augmentation()
+    else:
+        scale, rot, do_flip, color_scale = 1.2, 0, False, [1.0, 1.0, 1.0]
+
+    trans = gen_trans_from_patch_cv(center_x, center_y, width, height, patch_width, patch_height, scale, rot, inv=False)
+
+    for n_jt in range(kp_2d.shape[0]):
+        kp_2d[n_jt] = trans_point2d(kp_2d[n_jt], trans)
+
+    return kp_2d, trans
+
+def normalize_2d_kp(kp_2d, crop_size):
+    kp_2d_norm = kp_2d - crop_size / 2.
+    kp_2d_norm = kp_2d_norm / (crop_size / 2.)
+    return kp_2d_norm
+
+def split_into_chunks(vid_names, seqlen, stride):
+    vid_names = np.array(vid_names)
+    start_indices = np.arange(0, len(vid_names) - seqlen + 1, stride)
+    return [(start_index, start_index + seqlen) for start_index in start_indices]
