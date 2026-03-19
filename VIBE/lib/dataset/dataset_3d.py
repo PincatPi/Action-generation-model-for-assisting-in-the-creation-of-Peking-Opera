@@ -45,16 +45,28 @@ class Dataset3D(Dataset):
     def get_single_item(self, index):
         start_index, end_index = self.vid_indices[index]
 
-        kp_2d = self.db['joints2D'][start_index:end_index + 1]
-        kp_3d = self.db['joints3D'][start_index:end_index + 1]
-        features = self.db['features'][start_index:end_index + 1]
-        theta = self.db['pose'][start_index:end_index + 1]
-        beta = self.db['shape'][start_index:end_index + 1]
+        is_train = self.set == 'train'
 
-        return {
-            'features': torch.from_numpy(features).float(),
+        if self.dataset_name == '3dpw':
+            kp_2d = convert_kps(self.db['joints2D'][start_index:end_index + 1], src='common', dst='spin')
+            kp_3d = self.db['joints3D'][start_index:end_index + 1]
+        elif self.dataset_name == 'mpii3d':
+            kp_2d = self.db['joints2D'][start_index:end_index + 1]
+            if is_train:
+                kp_3d = self.db['joints3D'][start_index:end_index + 1]
+            else:
+                kp_3d = convert_kps(self.db['joints3D'][start_index:end_index + 1], src='spin', dst='common')
+        elif self.dataset_name == 'h36m':
+            kp_2d = self.db['joints2D'][start_index:end_index + 1]
+            if is_train:
+                kp_3d = self.db['joints3D'][start_index:end_index + 1]
+            else:
+                kp_3d = convert_kps(self.db['joints3D'][start_index:end_index + 1], src='spin', dst='common')
+
+        target = {
+            'features': torch.from_numpy(self.db['features'][start_index:end_index + 1]).float(),
             'kp_2d': torch.from_numpy(kp_2d).float(),
             'kp_3d': torch.from_numpy(kp_3d).float(),
-            'theta': torch.from_numpy(theta).float(),
-            'beta': torch.from_numpy(beta).float(),
         }
+
+        return target
